@@ -6,76 +6,96 @@ from laya_agent.models import ACTION_DONE, META_ACTIONS, Rect, Snapshot, UIEleme
 import pytest
 
 
-def _els(names):
-    return [UIElement(id=i + 1, kind="Button", name=n, rect=Rect(0, i * 10, 50, i * 10 + 9)) for i, n in enumerate(names)]
+def _els(names, kind="Button"):
+    return [UIElement(id=i + 1, kind=kind, name=n, rect=Rect(0, i * 10, 50, i * 10 + 9)) for i, n in enumerate(names)]
 
 
-def _snap(names):
-    return Snapshot(png=b"", width=100, height=100, window_title="Notepad", elements=_els(names))
+def _snap(names, kind="Button"):
+    return Snapshot(png=b"", width=100, height=100, window_title="Notepad", elements=_els(names, kind))
 
 
 def _fake_predict(winner: str, done: float = 0.1):
+    """Winner gets 0.7 when present in the question, else the first click option does."""
     calls = []
 
     def predict(state, questions):
         calls.append((state, questions))
         keys = list(questions["action"]["criteria"].keys())
+        w = winner if winner in keys else next(k for k in keys if k.startswith("click_"))
         n = len(keys)
-        probs = {k: (0.7 if k == winner else 0.3 / (n - 1)) for k in keys}
-        return {
-            "answers": {
-                "action": {"choice": winner, "probabilities": probs, "confidence": 0.5},
-                "done": {"noul": done},
-            }
-        }
+        probs = {k: (0.7 if k == w else 0.3 / (n - 1)) for k in keys}
+        return {"answers": {"action": {"choice": w, "probabilities": probs, "confidence": 0.5}, "done": {"noul": done}}}
 
     predict.calls = calls
     return predict
 
 
+def _click_keys(call):
+    return [k for k in call[1]["action"]["criteria"] if k.startswith("click_")]
+
+
 def test_decide_picks_element_and_exposes_top_k():
     fake = _fake_predict("click_2")
-    policy = LayaPolicy(Config(max_elements=5), predict=fake)
+    policy = LayaPolicy(Config(alias_path=None), predict=fake)
     d = policy.decide("open the edit menu", _snap(["File", "Edit", "View"]), history=[])
     assert d.action == "click_2" and d.element.name == "Edit" and d.is_click
-    assert d.top_k[0][0] == "click Button 'Edit'" and abs(d.top_k[0][1] - 0.7) < 1e-6
+    assert d.top_k[0][0] == "click button 'Edit'" and abs(d.top_k[0][1] - 0.7) < 1e-6
     assert d.confidence >= 0.7
     state, questions = fake.calls[0]
     assert state["goal"] == "open the edit menu" and state["window"] == "Notepad"
-    assert set(META_ACTIONS) <= set(questions["action"]["criteria"])
+    assert {"done", "scroll_down"} <= set(questions["action"]["criteria"])
+    assert "need_text" in questions  # asked as a separate yes/no, not as an option
+    assert set(d.raw["_shortlist"]) == {1, 2, 3} and d.raw["_fine"] == [1, 2, 3]
 
 
 def test_decide_meta_action_has_no_element():
-    policy = LayaPolicy(Config(), predict=_fake_predict(ACTION_DONE, done=0.95))
+    policy = LayaPolicy(Config(alias_path=None), predict=_fake_predict(ACTION_DONE, done=0.95))
     d = policy.decide("nothing", _snap(["File"]), history=[])
     assert d.action == ACTION_DONE and d.element is None and d.done_prob == 0.95
 
 
-def test_rank_puts_goal_words_first_and_caps():
-    policy = LayaPolicy(Config(max_elements=2), predict=_fake_predict("click_3"))
-    names = ["Zzz", "Yyy", "Save As", "Xxx"]
-    ranked = policy.rank_elements("save the file as", _els(names))
-    assert ranked[0].name == "Save As"
-    d = policy.decide("save the file as", _snap(names), history=[])
-    assert len([k for k in d.raw["answers"]["action"]["probabilities"] if k.startswith("click_")]) == 2
-
-
-def test_coarse_to_fine_second_pass_when_many_elements():
-    fake = _fake_predict("click_9")
-    policy = LayaPolicy(Config(max_elements=20), predict=fake)
-    names = [f"Item {i}" for i in range(12)]
-    d = policy.decide("pick item 8", _snap(names), history=[])
-    assert len(fake.calls) == 2
-    coarse = [k for k in fake.calls[0][1]["action"]["criteria"] if k.startswith("click_")]
-    fine = [k for k in fake.calls[1][1]["action"]["criteria"] if k.startswith("click_")]
-    assert len(coarse) == 12 and len(fine) == LayaPolicy.FINE_K and "click_9" in fine
-    assert d.action == "click_9" and d.element.name == "Item 8"
-
-
 def test_single_pass_when_few_elements():
     fake = _fake_predict("click_1")
-    LayaPolicy(Config(), predict=fake).decide("x", _snap(["A", "B"]), history=[])
+    LayaPolicy(Config(alias_path=None), predict=fake).decide("x", _snap(["A", "B"]), history=[])
     assert len(fake.calls) == 1
+
+
+def test_shortlist_uses_laya_over_chunks_and_keeps_winner_without_keyword():
+    """96 tabs named by page title; goal says 'github' but the tab is 'NandhaKishorM/laya'."""
+    names = [f"Page {i}" for i in range(95)] + ["NandhaKishorM/laya"]
+    fake = _fake_predict("click_96")
+    policy = LayaPolicy(Config(alias_path=None, coarse_chunk=20, coarse_keep=3), predict=fake)
+    d = policy.decide("switch to the github tab", _snap(names, kind="TabItem"), history=[])
+    assert d.element is not None and d.element.name == "NandhaKishorM/laya"
+    chunk_calls = [c for c in fake.calls if len(_click_keys(c)) > LayaPolicy.FINE_K]
+    assert len(chunk_calls) >= 5  # 96 / 20 chunks, then a merge cut
+    assert len(_click_keys(fake.calls[-1])) == LayaPolicy.FINE_K  # calibrated fine pass
+    assert 96 in d.raw["_fine"] and len(d.raw["_fine"]) == LayaPolicy.FINE_K
+
+
+def test_keyword_hits_survive_shortlist():
+    names = [f"Thing {i}" for i in range(30)] + ["Save As"]
+    fake = _fake_predict("click_1")  # Laya "prefers" other things; keyword must still survive
+    policy = LayaPolicy(Config(alias_path=None), predict=fake)
+    d = policy.decide("save as", _snap(names), history=[])
+    assert 31 in d.raw["_fine"]
+
+
+def test_kind_named_in_goal_survives_to_fine_pass():
+    """Page buttons word-match 'github'; the tab does not. 'tab' in the goal must keep TabItems."""
+    els = _els([f"Install GitHub {i}" for i in range(30)]) + [
+        UIElement(id=31, kind="TabItem", name="NandhaKishorM/laya", rect=Rect(0, 0, 5, 5)),
+        UIElement(id=32, kind="TabItem", name="Hugging Face", rect=Rect(6, 0, 11, 5)),
+    ]
+    snap = Snapshot(png=b"", width=1, height=1, window_title="Chrome", elements=els)
+    d = LayaPolicy(Config(alias_path=None), predict=_fake_predict("click_1")).decide("switch to the github tab", snap, history=[])
+    assert {31, 32} <= set(d.raw["_fine"])
+
+
+def test_rank_boosts_kind_named_in_goal():
+    els = _els(["Zzz", "Yyy"], kind="Button") + [UIElement(id=3, kind="TabItem", name="Xxx", rect=Rect(0, 0, 5, 5))]
+    ranked = LayaPolicy(Config(alias_path=None), predict=_fake_predict("click_1")).rank_elements("switch to the next tab", els)
+    assert ranked[0].kind == "TabItem"
 
 
 def test_margin_confidence_low_when_flat():
@@ -90,12 +110,12 @@ def test_ask_returns_probability():
         assert "visible" in state
         return {"answers": {"q": {"noul": 0.83}}}
 
-    policy = LayaPolicy(Config(), predict=predict)
+    policy = LayaPolicy(Config(alias_path=None), predict=predict)
     assert policy.ask("is a dialog open?", _snap(["OK"])) == 0.83
 
 
 def test_null_text_generator_defers_to_human():
-    gen = make_text_generator(Config())
+    gen = make_text_generator(Config(alias_path=None))
     assert isinstance(gen, NullTextGenerator)
     with pytest.raises(TextNeedsHuman):
         gen.generate("type the url", {})
