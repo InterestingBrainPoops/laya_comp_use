@@ -97,4 +97,5 @@ def hidden_window(hwnd: int | None, settle_s: float = 0.25) -> Iterator[None]:
         yield
     finally:
         if was_visible:
-            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+            # Restore without stealing focus so the target app stays in the foreground.
+            win32gui.ShowWindow(hwnd, win32con.SW_SHOWNOACTIVATE)

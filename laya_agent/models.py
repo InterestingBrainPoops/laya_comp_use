@@ -87,7 +87,8 @@ class Decision:
     confidence: float
     done_prob: float
     top_k: list[tuple[str, float]]  # (human label, probability) best first
-    raw: dict[str, Any] = field(default_factory=dict)
+    top_actions: list[str] = field(default_factory=list)  # action ids aligned with top_k
+    raw: dict[str, Any] = field(default_factory=dict)  # model output; "_elements" maps action -> UIElement
 
     @property
     def is_click(self) -> bool:

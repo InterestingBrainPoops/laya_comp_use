@@ -49,13 +49,16 @@ class LayaPolicy:
         ans = raw["answers"]
         action = ranked[0][0]
         element = self._element_for(action, candidates)
-        top_k = [(self.describe(label, candidates), p) for label, p in ranked[:5]]
+        top = ranked[:5]
+        raw = dict(raw)
+        raw["_elements"] = {f"click_{e.id}": e for e in candidates}
         return Decision(
             action=action,
             element=element,
             confidence=self.margin_confidence(ranked, float(ans["action"]["confidence"])),
             done_prob=float(ans["done"]["noul"]),
-            top_k=top_k,
+            top_k=[(self.describe(label, candidates), p) for label, p in top],
+            top_actions=[label for label, _ in top],
             raw=raw,
         )
 
