@@ -8,10 +8,11 @@ from laya_agent.models import Snapshot
 
 
 class ScreenParser(Protocol):
-    def parse(self, exclude_hwnd: int | None = None) -> Snapshot:
+    def parse(self, exclude_hwnd: int | None = None, window_title: str | None = None) -> Snapshot:
         """Capture the screen and list actionable elements.
 
         exclude_hwnd: our own window; its elements are never returned.
+        window_title: case-insensitive title substring to target instead of the foreground window.
         """
         ...
 

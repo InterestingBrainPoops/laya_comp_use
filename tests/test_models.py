@@ -12,8 +12,8 @@ def test_rect_center_and_area():
 
 
 def test_element_label_with_path():
-    assert _el().label() == "Button 'OK'"
-    assert _el(path="Dialog > Footer").label() == "Button 'OK' in Dialog > Footer"
+    assert _el().label() == "button 'OK'"
+    assert _el(path="Dialog > Footer").label() == "button 'OK' in Dialog > Footer"
 
 
 def test_snapshot_by_id():

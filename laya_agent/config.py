@@ -12,13 +12,19 @@ class Config:
     head_max_len: int = 320  # option budget; state gets the rest of 512 tokens
     conf_threshold: float = 0.7  # below this the loop asks the human
     done_threshold: float = 0.8  # noul P(goal achieved) above this ends the task
-    max_elements: int = 20  # options shown to Laya per step
+    max_elements: int = 120  # hard cap on elements considered per step (bounds latency)
+    coarse_chunk: int = 20  # elements per shortlisting forward pass
+    coarse_keep: int = 3  # survivors per chunk
+    alias_path: str | None = ".laya_aliases.json"  # learned goal -> element names; None disables
 
     # Perception
     screen_parser: str = "uia"  # "uia" | "omniparser" (v1.5)
+    target_window: str | None = None  # title substring; None = foreground window
     monitor_index: int = 1  # mss monitor index (1 = primary)
-    uia_max_depth: int = 14
-    uia_max_nodes: int = 2500
+    uia_max_depth: int = 16
+    uia_max_nodes: int = 3000
+    uia_document_budget: int = 600  # nodes per web page (Document control) before moving on
+    uia_deadline_s: float = 4.0
 
     # Text generation (v2)
     text_generator: str = "null"  # "null" | "hf"

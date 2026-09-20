@@ -39,17 +39,27 @@ class UIElement:
     rect: Rect
     path: str = ""  # ancestor names, "Settings > Navigation"
     automation_id: str = ""
+    selected: bool = False  # the active tab / checked item
 
     @property
     def center(self) -> tuple[int, int]:
         return self.rect.center
 
     def label(self) -> str:
-        """Compact text the decision model sees as an option."""
-        s = f"{self.kind} '{self.name}'"
+        """Compact text the decision model sees as an option, in plain words."""
+        s = f"{KIND_WORDS.get(self.kind, self.kind.lower())} '{self.name}'"
+        if self.selected:
+            s += " (current)"
         if self.path:
             s += f" in {self.path}"
         return s
+
+
+KIND_WORDS = {
+    "TabItem": "tab", "Hyperlink": "link", "Edit": "text field", "MenuItem": "menu item",
+    "ListItem": "list item", "TreeItem": "tree item", "ComboBox": "dropdown", "CheckBox": "checkbox",
+    "RadioButton": "radio button", "SplitButton": "button", "Button": "button",
+}
 
 
 @dataclass

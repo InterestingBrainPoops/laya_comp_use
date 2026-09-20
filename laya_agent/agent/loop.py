@@ -47,6 +47,8 @@ class AgentLoop:
         self.events = events
         self.stop_event = threading.Event()
         self.own_hwnd: int | None = None
+        self.last_snapshot: Snapshot | None = None
+        self.last_decision: Decision | None = None
 
     # -- entry points ---------------------------------------------------------
     def run(self, goal: str) -> str:
@@ -61,8 +63,12 @@ class AgentLoop:
             step += 1
             snap = self._perceive()
             decision = self.policy.decide(goal, snap, history)
+            self.last_snapshot, self.last_decision = snap, decision
+            n_short = len(decision.raw.get("_shortlist", []))
+            by = decision.raw.get("_decided_by", "laya")
             self.events.on_log(
-                f"step {step}: {decision.top_k[0][0]} (p={decision.top_k[0][1]:.2f}, "
+                f"step {step} in '{snap.window_title[:40]}': {len(snap.elements)} elements, "
+                f"{n_short} shortlisted. {decision.top_k[0][0]} by {by} (p={decision.top_k[0][1]:.2f}, "
                 f"conf={decision.confidence:.2f}, done={decision.done_prob:.2f})"
             )
 
@@ -91,6 +97,9 @@ class AgentLoop:
                     last_action = None
                     continue
                 decision = picked
+                if decision.element is not None:
+                    self.policy.remember(goal, decision.element)
+                    self.events.on_log(f"learned: '{goal}' -> {decision.element.label()}")
 
             if decision.action == ACTION_DONE:
                 self.events.on_step(StepResult(step, snap, decision, executed=False, note="done"))
@@ -116,7 +125,13 @@ class AgentLoop:
     # -- internals ------------------------------------------------------------
     def _perceive(self) -> Snapshot:
         with hidden_window(self.own_hwnd):
-            return self.parser.parse(exclude_hwnd=self.own_hwnd)
+            snap = self.parser.parse(exclude_hwnd=self.own_hwnd, window_title=self.cfg.target_window)
+        self.last_snapshot = snap
+        return snap
+
+    def inspect(self) -> Snapshot:
+        """Parse only, no decision. For the 'show all elements' debug view."""
+        return self._perceive()
 
     def _act(self, goal: str, snap: Snapshot, decision: Decision, step: int) -> str | None:
         if decision.action == ACTION_NEED_TEXT:

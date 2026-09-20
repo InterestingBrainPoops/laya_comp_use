@@ -1,7 +1,10 @@
-"""Live smoke test. Parses the foreground window; with --decide also asks Laya (no click).
+"""Live smoke test. Parses a window; with --decide also asks Laya (no click).
 
-    uv run python tests/scripts/smoke.py                          # list elements
-    uv run python tests/scripts/smoke.py --decide "open the File menu"
+    uv run python tests/scripts/smoke.py --window chrome --all --annotate
+    uv run python tests/scripts/smoke.py --window chrome --decide "switch to the github tab" --annotate
+
+--annotate writes tests/out/annotated.png: grey = every element, orange = shortlisted,
+green = fine pass, red = chosen. --all prints every element instead of the first 60.
 """
 from __future__ import annotations
 
@@ -13,29 +16,31 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from laya_agent.config import Config
+from laya_agent.debug import annotate_png, element_listing
 from laya_agent.perception.base import make_screen_parser
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--decide", metavar="GOAL", default=None)
-    ap.add_argument("--delay", type=float, default=2.0, help="seconds to switch to the target window")
-    ap.add_argument("--save", action="store_true", help="save screenshot to tests/out/smoke.png")
+    ap.add_argument("--window", metavar="TITLE_SUBSTR", default=None, help="target window by title instead of foreground")
+    ap.add_argument("--delay", type=float, default=0.0, help="seconds to switch to the target window")
+    ap.add_argument("--all", action="store_true", help="print every element")
+    ap.add_argument("--annotate", action="store_true", help="save tests/out/annotated.png")
     args = ap.parse_args()
-    cfg = Config()
-    print(f"focus the target window... {args.delay:.0f}s")
-    time.sleep(args.delay)
+    cfg = Config(target_window=args.window)
+    if args.delay:
+        print(f"focus the target window... {args.delay:.0f}s")
+        time.sleep(args.delay)
     parser = make_screen_parser(cfg)
     t0 = time.perf_counter()
-    snap = parser.parse()
+    snap = parser.parse(window_title=cfg.target_window)
     dt = time.perf_counter() - t0
     print(f"window={snap.window_title!r} elements={len(snap.elements)} parse={dt * 1000:.0f}ms size={snap.width}x{snap.height}")
-    for e in snap.elements[:60]:
-        print(f"  [{e.id:>3}] {e.label()}  @{e.center}")
-    if args.save:
-        out = Path("tests/out")
-        out.mkdir(exist_ok=True)
-        (out / "smoke.png").write_bytes(snap.png)
+
+    shortlist: set[int] = set()
+    fine: set[int] = set()
+    chosen: int | None = None
     if args.decide:
         from laya_agent.brain.laya_policy import LayaPolicy
 
@@ -43,9 +48,23 @@ def main() -> None:
         t0 = time.perf_counter()
         d = policy.decide(args.decide, snap, history=[])
         ms = (time.perf_counter() - t0) * 1000
-        print(f"\ndecision={d.action} conf={d.confidence:.2f} done_p={d.done_prob:.2f} ({ms:.0f}ms)")
+        shortlist, fine = set(d.raw["_shortlist"]), set(d.raw["_fine"])
+        chosen = d.element.id if d.element else None
+        print(f"\ndecision={d.action} conf={d.confidence:.2f} done_p={d.done_prob:.2f} ({ms:.0f}ms incl. model load)")
         for label, p in d.top_k:
             print(f"  {p:6.3f}  {label}")
+        print()
+
+    listing = element_listing(snap, shortlist, fine)
+    lines = listing.splitlines()
+    print("\n".join(lines if args.all else lines[:61]))
+    if not args.all and len(lines) > 61:
+        print(f"  ... {len(lines) - 61} more (use --all)")
+    if args.annotate:
+        out = Path("tests/out")
+        out.mkdir(exist_ok=True)
+        (out / "annotated.png").write_bytes(annotate_png(snap, shortlist, fine, chosen))
+        print(f"\nwrote {out / 'annotated.png'}")
 
 
 if __name__ == "__main__":

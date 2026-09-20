@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 
 from laya_agent.agent.loop import AgentLoop, build_loop
 from laya_agent.config import Config
+from laya_agent.debug import annotate_png, element_listing
 from laya_agent.models import InputRequest, StepResult
 
 BOX_COLORS = ["#ff3b30", "#ff9500", "#ffcc00", "#34c759", "#5ac8fa"]
@@ -106,10 +107,13 @@ class MainWindow(QMainWindow):
         self.send_btn = QPushButton("Send")
         self.stop_btn = QPushButton("Stop")
         self.stop_btn.setEnabled(False)
+        self.all_btn = QPushButton("All elements")
+        self.all_btn.setToolTip("Parse the target window now and show every element, unpruned")
         row = QHBoxLayout()
         row.addWidget(self.input, 1)
         row.addWidget(self.send_btn)
         row.addWidget(self.stop_btn)
+        row.addWidget(self.all_btn)
         lv.addWidget(self.chat, 1)
         lv.addLayout(row)
 
@@ -135,6 +139,7 @@ class MainWindow(QMainWindow):
         self.send_btn.clicked.connect(self._submit)
         self.input.returnPressed.connect(self._submit)
         self.stop_btn.clicked.connect(self._stop)
+        self.all_btn.clicked.connect(self._show_all)
         self.events.log.connect(self._on_log)
         self.events.step.connect(self._on_step)
         self.events.input_needed.connect(self._on_input_needed)
@@ -173,6 +178,24 @@ class MainWindow(QMainWindow):
             self.awaiting_input = False
             self.events.reply("stop")
 
+    @Slot()
+    def _show_all(self) -> None:
+        """Parse now (or reuse the last step) and show the unpruned overlay plus the full list."""
+        if self.worker is not None and self.worker.isRunning():
+            snap, dec = self.loop.last_snapshot, self.loop.last_decision
+            if snap is None:
+                self._say("system", "no snapshot yet")
+                return
+        else:
+            snap, dec = self.loop.inspect(), None
+        shortlist = set(dec.raw.get("_shortlist", [])) if dec else set()
+        fine = set(dec.raw.get("_fine", [])) if dec else set()
+        chosen = dec.element.id if dec and dec.element else None
+        self._show_png(annotate_png(snap, shortlist, fine, chosen))
+        listing = element_listing(snap, shortlist, fine).replace("&", "&amp;").replace("<", "&lt;")
+        self._say("system", f"<pre style='font-size:11px'>{listing}</pre>")
+        self.table.setRowCount(0)
+
     @Slot(str)
     def _on_log(self, msg: str) -> None:
         self._say("agent", msg)
@@ -202,10 +225,25 @@ class MainWindow(QMainWindow):
         self._say("agent", f"P(yes) = <b>{p:.2f}</b> for “{question}”")
 
     # -- rendering --------------------------------------------------------------
-    def _render(self, result: StepResult) -> None:
-        d = result.decision
+    def _show_png(self, png: bytes) -> None:
         pix = QPixmap()
-        pix.loadFromData(result.snapshot.png, "PNG")
+        pix.loadFromData(png, "PNG")
+        self.preview.setPixmap(
+            pix.scaled(self.preview.size(), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+        )
+
+    def _render(self, result: StepResult) -> None:
+        """Grey = every parsed element, orange = shortlisted, green = fine pass, red = chosen.
+        Then the top-5 ranks are drawn big on top."""
+        d = result.decision
+        base = annotate_png(
+            result.snapshot,
+            set(d.raw.get("_shortlist", [])),
+            set(d.raw.get("_fine", [])),
+            d.element.id if d.element else None,
+        )
+        pix = QPixmap()
+        pix.loadFromData(base, "PNG")
         elements = d.raw.get("_elements", {})
         painter = QPainter(pix)
         painter.setFont(QFont("Segoe UI", 22, QFont.Weight.Bold))
@@ -216,7 +254,7 @@ class MainWindow(QMainWindow):
             color = QColor(BOX_COLORS[rank])
             painter.setPen(QPen(color, 4))
             painter.drawRect(el.rect.left, el.rect.top, el.rect.width, el.rect.height)
-            painter.drawText(el.rect.left, max(24, el.rect.top - 6), str(rank + 1))
+            painter.drawText(el.rect.right + 4, max(24, el.rect.top + 20), f"#{rank + 1}")
         painter.end()
         self.preview.setPixmap(
             pix.scaled(self.preview.size(), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)

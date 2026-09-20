@@ -10,7 +10,7 @@ EL2 = UIElement(id=2, kind="Button", name="Edit", rect=Rect(0, 20, 10, 30))
 
 
 class FakeParser:
-    def parse(self, exclude_hwnd=None):
+    def parse(self, exclude_hwnd=None, window_title=None):
         return Snapshot(png=b"", width=10, height=10, window_title="w", elements=[EL, EL2])
 
 
@@ -34,6 +34,9 @@ class FakePolicy:
 
     def ask(self, question, snap, goal="", history=None):
         return 0.5
+
+    def remember(self, goal, element):
+        self.calls.append(("remember", goal, element.name))
 
 
 class FakeExecutor:
