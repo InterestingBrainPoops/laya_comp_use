@@ -30,6 +30,17 @@ def _kind(control_type_name: str) -> str:
     return control_type_name.removesuffix("Control")
 
 
+def _clean_name(raw: str) -> str:
+    """Drop icon-font glyphs (private use area) and control chars; collapse whitespace."""
+    out = "".join(ch for ch in raw if not (0xE000 <= ord(ch) <= 0xF8FF or ord(ch) < 32))
+    return " ".join(out.split())
+
+
+def _is_readable(name: str) -> bool:
+    """True for human labels, false for class-name noise like DesktopWindowXamlSource."""
+    return bool(name) and (" " in name or len(name) <= 14)
+
+
 class UIAScreenParser:
     def __init__(self, cfg: Config) -> None:
         self.cfg = cfg
@@ -82,7 +93,7 @@ class UIAScreenParser:
                 if exclude_hwnd and ctrl.NativeWindowHandle == exclude_hwnd:
                     continue
                 ct = ctrl.ControlTypeName
-                name = (ctrl.Name or "").strip()
+                name = _clean_name(ctrl.Name or "")
                 rect = ctrl.BoundingRectangle
                 offscreen = ctrl.IsOffscreen
             except Exception:
@@ -97,7 +108,7 @@ class UIAScreenParser:
                         elements.append(el)
             if depth >= self.cfg.uia_max_depth:
                 continue
-            child_path = path + [name] if (ct in PATH_TYPES and name and depth > 0) else path
+            child_path = path + [name] if (ct in PATH_TYPES and _is_readable(name) and depth > 0) else path
             try:
                 children = ctrl.GetChildren()
             except Exception:
@@ -113,7 +124,7 @@ class UIAScreenParser:
         except Exception:
             pass
         if ct in CLICKABLE_TYPES:
-            if not name and not aid:
+            if not name and not aid.isalnum():
                 return None
         elif ct in MAYBE_TYPES:
             if not name or not self._has_invoke(ctrl):

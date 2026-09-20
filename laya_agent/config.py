@@ -10,7 +10,7 @@ class Config:
     model_id: str = "convaiinnovations/laya"
     device: str | None = None  # None -> laya picks cuda if available
     head_max_len: int = 320  # option budget; state gets the rest of 512 tokens
-    conf_threshold: float = 0.6  # below this the loop asks the human
+    conf_threshold: float = 0.7  # below this the loop asks the human
     done_threshold: float = 0.8  # noul P(goal achieved) above this ends the task
     max_elements: int = 20  # options shown to Laya per step
 
