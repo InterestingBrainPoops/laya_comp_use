@@ -48,12 +48,29 @@ laya_agent/
 Rules: layers talk only through `models.py` and the two protocols. No layer imports another
 layer's internals.
 
-## Why coarse-to-fine
+## How a decision is made
 
-Laya's calibration temperature for 11+ options is 0.1, which turns every answer into
-near-certainty. The policy first shortlists among up to 20 elements, then re-scores the
-top 6 plus the 4 meta actions (scroll up/down, done, need_text) in the 6-10 bucket where
-probabilities are calibrated. The low-confidence gate reads the second pass.
+1. **Name match** (`brain/lexical.py`). If your goal names an element ("the NandhaKishorM
+   tab", "open a new tab"), a deterministic token matcher decides. Laya is a triage model
+   and cannot do literal string matching reliably, so explicit references never reach it.
+   Saying a kind ("tab", "button", "link") penalises other kinds.
+2. **Laya** for the vague cases. Shortlisting runs Laya over chunks of 20 elements, keeping
+   3 per chunk plus every name/kind hit, then a final pass over 8 elements + done/scroll in
+   the 10-option bucket where Laya's probabilities are calibrated (its 11+ option temperature
+   is 0.1, near-argmax, so only the final pass feeds the confidence gate).
+3. **Ask you** when neither is confident. Your pick is saved to `.laya_aliases.json`, so
+   "github tab" maps to that tab's title next time and step 1 resolves it.
+
+## Seeing what the agent sees
+
+- Chat window: **All elements** button parses the target window now and shows every
+  element boxed and numbered (grey = parsed, orange = shortlisted, green = final pass,
+  red = chosen) with the full list in the chat.
+- CLI: `uv run python tests/scripts/smoke.py --window chrome --decide "..." --annotate --all`
+  writes `tests/out/annotated.png` and prints every element, marking `*` shortlisted and
+  `**` final-pass ones.
+- Each step's log line says how many elements were parsed and shortlisted and whether the
+  choice came from the name match or Laya.
 
 ## v2 hooks
 
