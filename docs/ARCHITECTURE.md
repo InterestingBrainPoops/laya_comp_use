@@ -64,8 +64,20 @@ Decisions:
   Path segments that repeat the window title or look like class names are dropped.
 - **`selected`** is read for tabs/list/radio/tree items and shown as "(current)" so
   "switch to" makes sense.
-- Target window is the foreground window, or `config.target_window` by title substring.
-  Our own window is excluded by handle and minimized during capture and click, restored
+- **All visible windows, not just the foreground one.** Top-level windows are walked in
+  z-order, front first. The front window gets `uia_max_nodes`; each background window gets
+  `uia_background_budget` (enough for tabs, toolbars, menus, not page content). Every
+  window is also emitted as a `Window` element so "switch to spotify" is a click target;
+  minimized windows appear only as `Window` elements. `config.target_window` narrows to
+  one window by title substring.
+- **App name from the process, not the title.** Spotify's title is the playing song and a
+  browser's title is the page. `_app_name` reads the owning executable (`chrome.exe` ->
+  Chrome) and it is carried on every element as `window`, shown in labels as
+  "in window Spotify" / "of app Spotify".
+- **Selection propagates.** Children of the selected tab inherit `selected`, so the current
+  tab's close button is "button 'Close Tab' (current)" and "close the current tab" cannot
+  hit the first tab's button.
+- Our own window is excluded by handle and minimized during capture and click, restored
   with `SW_SHOWNOACTIVATE` so focus stays on the target app.
 
 Measured: Windows Terminal 17 elements in 200ms; Chrome with a large page ~100 elements
@@ -100,6 +112,35 @@ becomes explicit after one correction. This is the intended way the agent gets b
 Instruction wording (measured on the Chrome tab strip): putting the goal inside the
 question text ("The user asked: ... Which screen element is the user asking to click?")
 beats a generic "which action moves closest to the goal" framing.
+
+### 5b. Lexical scoring across windows
+
+- Elements match on their name (+ aliases). A word matching only the owning app's name
+  still counts, but an element matched *only* that way is scaled by 0.4, so "spotify"
+  picks the Spotify window while "play in spotify" picks the Play button inside it.
+- Windows match on their app name; title words never make a window explicit (cap 0.7), so
+  "open a new tab in chrome" picks the New Tab button, not the window titled
+  "New Tab - Google Chrome".
+- Any unmatched goal word caps the score at 0.7: a strong shortlist candidate, never an
+  explicit decision. Explicit means every goal word matched.
+- Selected elements answer to "current", "active", "selected", "focused". Ties between
+  same-named elements prefer the selected one, then the front-most.
+
+## 5c. Click targeting (`actuation/targeting.py`)
+
+The centre of a bounding box is wrong for composite controls: Windows Terminal's New Tab
+is a SplitButton whose centre (x=868) lands on the divider between its primary part
+(ends at 867) and the dropdown arrow. Rules, all pure geometry with tests:
+
+1. Descend into the main child: the largest contained child covering ≥ 40% of the target
+   (PrimaryButton inside the SplitButton). Up to 3 levels.
+2. Obstacles are overlapping elements that neither contain the target nor are its main
+   part (a tab's Close button). Pick the grid point inside the target, inset 4px from its
+   edges, with the largest clearance from every obstacle; ties go to the point nearest the
+   centre.
+3. Elements in a background window get their window activated first (`alt` press then
+   `SetForegroundWindow`, restore if minimized), so the click lands on them and not on
+   whatever covered them.
 
 ## 6. Loop and gating (`agent/loop.py`)
 
@@ -156,6 +197,10 @@ Reproduce with `uv run python -m laya_agent.cli "x" --dry-run --max-steps 1`, wh
 | 2026-09-20 | BFS walk with per-page budget | Chrome page trees blew the parse deadline and hid the tab strip |
 | 2026-09-20 | Offline-first model resolve, background preload | 22s hub re-check on every start |
 | 2026-09-20 | Skip torch random init during `laya.load` | 7-13s spent initialising weights the checkpoint overwrites |
+| 2026-09-20 | Parse all visible windows in z-order, offer windows as targets | user works across apps; foreground-only could not "switch to spotify" |
+| 2026-09-20 | App name from the process executable | Spotify's and browsers' titles do not contain the app name |
+| 2026-09-20 | Click targeting: main child + obstacle clearance | New Tab split button's centre hit the divider; tab centres can graze close buttons |
+| 2026-09-20 | Selection inherited by a tab's children; selected wins same-name ties | "close the current tab" must never close another tab |
 
 ## 11. Not done yet
 

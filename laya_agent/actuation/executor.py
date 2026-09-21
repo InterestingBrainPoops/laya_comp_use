@@ -8,6 +8,7 @@ from collections.abc import Iterator
 import pyautogui
 import pyperclip
 
+from laya_agent.actuation.targeting import click_point
 from laya_agent.config import Config
 from laya_agent.models import (
     ACTION_SCROLL_DOWN,
@@ -27,10 +28,19 @@ class Executor:
     # -- high level -----------------------------------------------------------
     def execute(self, decision: Decision) -> str:
         """Perform the decision. Returns a one-line history entry. Honors dry_run."""
-        if decision.element is not None:
-            note = f"clicked {decision.element.label()}"
+        el = decision.element
+        if el is not None and el.is_window:
             if not self.cfg.dry_run:
-                self.click(decision.element)
+                self.activate(el.hwnd)
+            return f"switched to window '{el.name}'"
+        if el is not None:
+            others = list(decision.raw.get("_elements", {}).values())
+            x, y = click_point(el, others)
+            note = f"clicked {el.label()} at ({x}, {y})"
+            if not self.cfg.dry_run:
+                if el.hwnd and not el.foreground:
+                    self.activate(el.hwnd)  # bring its window in front so the click lands on it
+                self.click_at(x, y)
             return note
         if decision.action == ACTION_SCROLL_DOWN:
             if not self.cfg.dry_run:
@@ -44,7 +54,9 @@ class Executor:
 
     # -- primitives -----------------------------------------------------------
     def click(self, el: UIElement, double: bool = False) -> None:
-        x, y = el.center
+        self.click_at(*el.center, double=double)
+
+    def click_at(self, x: int, y: int, double: bool = False) -> None:
         pyautogui.moveTo(x, y, duration=0.12)
         if double:
             pyautogui.doubleClick()
@@ -70,6 +82,22 @@ class Executor:
     def hotkey(self, *keys: str) -> None:
         if not self.cfg.dry_run:
             pyautogui.hotkey(*keys)
+
+    def activate(self, hwnd: int) -> None:
+        """Bring a top-level window to the front, restoring it if minimized."""
+        import win32con
+        import win32gui
+
+        if not hwnd or not win32gui.IsWindow(hwnd):
+            return
+        if win32gui.IsIconic(hwnd):
+            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+        try:
+            pyautogui.press("alt")  # satisfies Windows' foreground-lock so SetForegroundWindow works
+            win32gui.SetForegroundWindow(hwnd)
+        except Exception:
+            pass
+        time.sleep(0.35)
 
 
 def _safe_paste() -> str | None:
