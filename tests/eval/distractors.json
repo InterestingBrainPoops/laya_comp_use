@@ -1,0 +1,723 @@
+[
+ {
+  "kind": "Button",
+  "name": "Reload",
+  "window": "Chrome",
+  "foreground": true,
+  "path": ""
+ },
+ {
+  "kind": "Button",
+  "name": "Het (Davis)",
+  "window": "Chrome",
+  "foreground": true,
+  "path": ""
+ },
+ {
+  "kind": "Button",
+  "name": "Chrome",
+  "window": "Chrome",
+  "foreground": true,
+  "path": ""
+ },
+ {
+  "kind": "Button",
+  "name": "Dashboard",
+  "window": "Chrome",
+  "foreground": true,
+  "path": "Bookmarks"
+ },
+ {
+  "kind": "Button",
+  "name": "Dragon of Icespire Peak -- Wizards RPG Team -- 2019, 2019 -- Wizards of the Coast Publishing -- 7980e74b232198fb45358de015c224f5 -- Anna’s Archive.pdf",
+  "window": "Chrome",
+  "foreground": true,
+  "path": "Bookmarks"
+ },
+ {
+  "kind": "Button",
+  "name": "Unnamed bookmark for file:///C:/Users/satas/projects/dataset_failure/data/sim_safetask_hammer_fail.mp4",
+  "window": "Chrome",
+  "foreground": true,
+  "path": "Bookmarks"
+ },
+ {
+  "kind": "Button",
+  "name": "Unnamed bookmark for file:///C:/Users/satas/Videos/SAS013final.mp4",
+  "window": "Chrome",
+  "foreground": true,
+  "path": "Bookmarks"
+ },
+ {
+  "kind": "Button",
+  "name": "University of California, Davis",
+  "window": "Chrome",
+  "foreground": true,
+  "path": "Bookmarks"
+ },
+ {
+  "kind": "Button",
+  "name": "Unddit",
+  "window": "Chrome",
+  "foreground": true,
+  "path": "Bookmarks"
+ },
+ {
+  "kind": "Button",
+  "name": "ca",
+  "window": "Chrome",
+  "foreground": true,
+  "path": "Bookmarks"
+ },
+ {
+  "kind": "Button",
+  "name": "CLA 10 Unit 14 Flashcards | Quizlet",
+  "window": "Chrome",
+  "foreground": true,
+  "path": "Bookmarks"
+ },
+ {
+  "kind": "Button",
+  "name": "d",
+  "window": "Chrome",
+  "foreground": true,
+  "path": "Bookmarks"
+ },
+ {
+  "kind": "Button",
+  "name": "Exam 2 Flashcards | Quizlet",
+  "window": "Chrome",
+  "foreground": true,
+  "path": "Bookmarks"
+ },
+ {
+  "kind": "Button",
+  "name": "3D LiDAR SLAM — Scan Matching Explained | by Ignitarium | Medium",
+  "window": "Chrome",
+  "foreground": true,
+  "path": "Bookmarks"
+ },
+ {
+  "kind": "Button",
+  "name": "0x7f800000",
+  "window": "Chrome",
+  "foreground": true,
+  "path": "Bookmarks"
+ },
+ {
+  "kind": "Button",
+  "name": "a \"universal\" autistic experience : r/CuratedTumblr",
+  "window": "Chrome",
+  "foreground": true,
+  "path": "Bookmarks"
+ },
+ {
+  "kind": "Button",
+  "name": "Menu containing hidden bookmarks",
+  "window": "Chrome",
+  "foreground": true,
+  "path": "Bookmarks"
+ },
+ {
+  "kind": "Button",
+  "name": "All Bookmarks",
+  "window": "Chrome",
+  "foreground": true,
+  "path": "Bookmarks"
+ },
+ {
+  "kind": "Slider",
+  "name": "Split View Resize Handle (draggable)",
+  "window": "Chrome",
+  "foreground": true,
+  "path": ""
+ },
+ {
+  "kind": "Button",
+  "name": "Open Gemini in Chrome",
+  "window": "Chrome",
+  "foreground": true,
+  "path": ""
+ },
+ {
+  "kind": "Button",
+  "name": "Collapse tabs",
+  "window": "Chrome",
+  "foreground": true,
+  "path": ""
+ },
+ {
+  "kind": "Button",
+  "name": "View site information",
+  "window": "Chrome",
+  "foreground": true,
+  "path": ""
+ },
+ {
+  "kind": "Button",
+  "name": "LastPassHas access to this site",
+  "window": "Chrome",
+  "foreground": true,
+  "path": ""
+ },
+ {
+  "kind": "Button",
+  "name": "Extensions",
+  "window": "Chrome",
+  "foreground": true,
+  "path": ""
+ },
+ {
+  "kind": "Button",
+  "name": "Tab groups",
+  "window": "Chrome",
+  "foreground": true,
+  "path": "Bookmarks > Saved Tab Groups"
+ },
+ {
+  "kind": "Button",
+  "name": "Close this view",
+  "window": "Chrome",
+  "foreground": true,
+  "path": ""
+ },
+ {
+  "kind": "Button",
+  "name": "Close this view",
+  "window": "Chrome",
+  "foreground": true,
+  "path": ""
+ },
+ {
+  "kind": "TabItem",
+  "name": "History",
+  "window": "Chrome",
+  "foreground": true,
+  "path": ""
+ },
+ {
+  "kind": "TabItem",
+  "name": "InterestingBrainPoops/laya_comp_use",
+  "window": "Chrome",
+  "foreground": true,
+  "path": ""
+ },
+ {
+  "kind": "TabItem",
+  "name": "friend - Reddit Search!",
+  "window": "Chrome",
+  "foreground": true,
+  "path": ""
+ },
+ {
+  "kind": "TabItem",
+  "name": "Finding a specific UC Davis dorm roommate post - Claude",
+  "window": "Chrome",
+  "foreground": true,
+  "path": ""
+ },
+ {
+  "kind": "Button",
+  "name": "Tab groups",
+  "window": "Chrome",
+  "foreground": true,
+  "path": ""
+ },
+ {
+  "kind": "Button",
+  "name": "AI Mode button, press Enter to ask AI Mode",
+  "window": "Chrome",
+  "foreground": true,
+  "path": ""
+ },
+ {
+  "kind": "Button",
+  "name": "Ask Google",
+  "window": "Chrome",
+  "foreground": true,
+  "path": ""
+ },
+ {
+  "kind": "Button",
+  "name": "Zoom: 100%",
+  "window": "Chrome",
+  "foreground": true,
+  "path": ""
+ },
+ {
+  "kind": "Button",
+  "name": "Install Claude",
+  "window": "Chrome",
+  "foreground": true,
+  "path": ""
+ },
+ {
+  "kind": "Button",
+  "name": "Find and edit",
+  "window": "Chrome",
+  "foreground": true,
+  "path": ""
+ },
+ {
+  "kind": "Button",
+  "name": "Hide sidebar",
+  "window": "Chrome",
+  "foreground": true,
+  "path": "Chrome Legacy Window > Sidebar"
+ },
+ {
+  "kind": "Hyperlink",
+  "name": "Claude",
+  "window": "Chrome",
+  "foreground": true,
+  "path": "Chrome Legacy Window > Sidebar"
+ },
+ {
+  "kind": "RadioButton",
+  "name": "Chat and Cowork",
+  "window": "Chrome",
+  "foreground": true,
+  "path": "Sidebar > Mode"
+ },
+ {
+  "kind": "RadioButton",
+  "name": "Code",
+  "window": "Chrome",
+  "foreground": true,
+  "path": "Sidebar > Mode"
+ },
+ {
+  "kind": "Hyperlink",
+  "name": "New",
+  "window": "Chrome",
+  "foreground": true,
+  "path": "Chrome Legacy Window > Sidebar"
+ },
+ {
+  "kind": "Button",
+  "name": "Quick task",
+  "window": "Chrome",
+  "foreground": true,
+  "path": "Chrome Legacy Window > Sidebar"
+ },
+ {
+  "kind": "Hyperlink",
+  "name": "Scheduled",
+  "window": "Chrome",
+  "foreground": true,
+  "path": "Chrome Legacy Window > Sidebar"
+ },
+ {
+  "kind": "Hyperlink",
+  "name": "Customize",
+  "window": "Chrome",
+  "foreground": true,
+  "path": "Chrome Legacy Window > Sidebar"
+ },
+ {
+  "kind": "Button",
+  "name": "More navigation items",
+  "window": "Chrome",
+  "foreground": true,
+  "path": "Chrome Legacy Window > Sidebar"
+ },
+ {
+  "kind": "Button",
+  "name": "Chats and tasks",
+  "window": "Chrome",
+  "foreground": true,
+  "path": "Chrome Legacy Window > Sidebar"
+ },
+ {
+  "kind": "Button",
+  "name": "View all",
+  "window": "Chrome",
+  "foreground": true,
+  "path": "Chrome Legacy Window > Sidebar"
+ },
+ {
+  "kind": "Button",
+  "name": "Filter and group recents",
+  "window": "Chrome",
+  "foreground": true,
+  "path": "Chrome Legacy Window > Sidebar"
+ },
+ {
+  "kind": "Button",
+  "name": "MinimizeButton",
+  "window": "Terminal",
+  "foreground": false,
+  "path": ""
+ },
+ {
+  "kind": "Button",
+  "name": "MaximizeButton",
+  "window": "Terminal",
+  "foreground": false,
+  "path": ""
+ },
+ {
+  "kind": "Button",
+  "name": "CloseButton",
+  "window": "Terminal",
+  "foreground": false,
+  "path": ""
+ },
+ {
+  "kind": "MenuItem",
+  "name": "System",
+  "window": "Terminal",
+  "foreground": false,
+  "path": "System"
+ },
+ {
+  "kind": "TabItem",
+  "name": "◐ laya-screen-agent-prototype",
+  "window": "Terminal",
+  "foreground": false,
+  "path": ""
+ },
+ {
+  "kind": "Button",
+  "name": "PrimaryButton",
+  "window": "Terminal",
+  "foreground": false,
+  "path": ""
+ },
+ {
+  "kind": "Button",
+  "name": "More Options",
+  "window": "Terminal",
+  "foreground": false,
+  "path": ""
+ },
+ {
+  "kind": "Button",
+  "name": "Vertical Small Decrease",
+  "window": "Terminal",
+  "foreground": false,
+  "path": ""
+ },
+ {
+  "kind": "Button",
+  "name": "Vertical Large Increase",
+  "window": "Terminal",
+  "foreground": false,
+  "path": ""
+ },
+ {
+  "kind": "Button",
+  "name": "Vertical Small Increase",
+  "window": "Terminal",
+  "foreground": false,
+  "path": ""
+ },
+ {
+  "kind": "Slider",
+  "name": "Split View Resize Handle (draggable)",
+  "window": "Spotify",
+  "foreground": false,
+  "path": ""
+ },
+ {
+  "kind": "TabItem",
+  "name": "Spotify - Web Player: Music for everyone - Memory usage - 373 MB",
+  "window": "Spotify",
+  "foreground": false,
+  "path": ""
+ },
+ {
+  "kind": "Button",
+  "name": "Zoom: 91%",
+  "window": "Spotify",
+  "foreground": false,
+  "path": ""
+ },
+ {
+  "kind": "Button",
+  "name": "Arrange split view",
+  "window": "Spotify",
+  "foreground": false,
+  "path": ""
+ },
+ {
+  "kind": "Button",
+  "name": "Arrange split view",
+  "window": "Spotify",
+  "foreground": false,
+  "path": ""
+ },
+ {
+  "kind": "Button",
+  "name": "Go back",
+  "window": "Spotify",
+  "foreground": false,
+  "path": "Chrome Legacy Window > Spotify - Web Player: Music fo"
+ },
+ {
+  "kind": "Button",
+  "name": "Go forward",
+  "window": "Spotify",
+  "foreground": false,
+  "path": "Chrome Legacy Window > Spotify - Web Player: Music fo"
+ },
+ {
+  "kind": "Button",
+  "name": "What's New",
+  "window": "Spotify",
+  "foreground": false,
+  "path": "Chrome Legacy Window > Spotify - Web Player: Music fo"
+ },
+ {
+  "kind": "Button",
+  "name": "Listening activity",
+  "window": "Spotify",
+  "foreground": false,
+  "path": "Chrome Legacy Window > Spotify - Web Player: Music fo"
+ },
+ {
+  "kind": "Button",
+  "name": "hsatasi1",
+  "window": "Spotify",
+  "foreground": false,
+  "path": "Chrome Legacy Window > Spotify - Web Player: Music fo"
+ },
+ {
+  "kind": "Button",
+  "name": "Looks like we don't have the lyrics for this song.",
+  "window": "Spotify",
+  "foreground": false,
+  "path": "Spotify - Web Player: Music fo > Now playing bar"
+ },
+ {
+  "kind": "Button",
+  "name": "Connect to a device",
+  "window": "Spotify",
+  "foreground": false,
+  "path": "Spotify - Web Player: Music fo > Now playing bar"
+ },
+ {
+  "kind": "Button",
+  "name": "Open Miniplayer",
+  "window": "Spotify",
+  "foreground": false,
+  "path": "Spotify - Web Player: Music fo > Now playing bar"
+ },
+ {
+  "kind": "Button",
+  "name": "Enter Full screen",
+  "window": "Spotify",
+  "foreground": false,
+  "path": "Spotify - Web Player: Music fo > Now playing bar"
+ },
+ {
+  "kind": "Button",
+  "name": "Reload",
+  "window": "Chrome",
+  "foreground": false,
+  "path": ""
+ },
+ {
+  "kind": "Button",
+  "name": "Het (Davis)",
+  "window": "Chrome",
+  "foreground": false,
+  "path": ""
+ },
+ {
+  "kind": "Button",
+  "name": "Chrome",
+  "window": "Chrome",
+  "foreground": false,
+  "path": ""
+ },
+ {
+  "kind": "Button",
+  "name": "Managed bookmarks",
+  "window": "Chrome",
+  "foreground": false,
+  "path": "Bookmarks"
+ },
+ {
+  "kind": "Button",
+  "name": "Dashboard",
+  "window": "Chrome",
+  "foreground": false,
+  "path": "Bookmarks"
+ },
+ {
+  "kind": "Button",
+  "name": "Dragon of Icespire Peak -- Wizards RPG Team -- 2019, 2019 -- Wizards of the Coast Publishing -- 7980e74b232198fb45358de015c224f5 -- Anna’s Archive.pdf",
+  "window": "Chrome",
+  "foreground": false,
+  "path": "Bookmarks"
+ },
+ {
+  "kind": "Button",
+  "name": "Unnamed bookmark for file:///C:/Users/satas/projects/dataset_failure/data/sim_safetask_hammer_fail.mp4",
+  "window": "Chrome",
+  "foreground": false,
+  "path": "Bookmarks"
+ },
+ {
+  "kind": "Button",
+  "name": "Unnamed bookmark for file:///C:/Users/satas/Videos/SAS013final.mp4",
+  "window": "Chrome",
+  "foreground": false,
+  "path": "Bookmarks"
+ },
+ {
+  "kind": "Button",
+  "name": "University of California, Davis",
+  "window": "Chrome",
+  "foreground": false,
+  "path": "Bookmarks"
+ },
+ {
+  "kind": "Button",
+  "name": "Unddit",
+  "window": "Chrome",
+  "foreground": false,
+  "path": "Bookmarks"
+ },
+ {
+  "kind": "Button",
+  "name": "ca",
+  "window": "Chrome",
+  "foreground": false,
+  "path": "Bookmarks"
+ },
+ {
+  "kind": "Button",
+  "name": "CLA 10 Unit 14 Flashcards | Quizlet",
+  "window": "Chrome",
+  "foreground": false,
+  "path": "Bookmarks"
+ },
+ {
+  "kind": "Button",
+  "name": "d",
+  "window": "Chrome",
+  "foreground": false,
+  "path": "Bookmarks"
+ },
+ {
+  "kind": "Button",
+  "name": "Exam 2 Flashcards | Quizlet",
+  "window": "Chrome",
+  "foreground": false,
+  "path": "Bookmarks"
+ },
+ {
+  "kind": "Button",
+  "name": "3D LiDAR SLAM — Scan Matching Explained | by Ignitarium | Medium",
+  "window": "Chrome",
+  "foreground": false,
+  "path": "Bookmarks"
+ },
+ {
+  "kind": "Button",
+  "name": "0x7f800000",
+  "window": "Chrome",
+  "foreground": false,
+  "path": "Bookmarks"
+ },
+ {
+  "kind": "Button",
+  "name": "a \"universal\" autistic experience : r/CuratedTumblr",
+  "window": "Chrome",
+  "foreground": false,
+  "path": "Bookmarks"
+ },
+ {
+  "kind": "Button",
+  "name": "Menu containing hidden bookmarks",
+  "window": "Chrome",
+  "foreground": false,
+  "path": "Bookmarks"
+ },
+ {
+  "kind": "Button",
+  "name": "All Bookmarks",
+  "window": "Chrome",
+  "foreground": false,
+  "path": "Bookmarks"
+ },
+ {
+  "kind": "Slider",
+  "name": "Split View Resize Handle (draggable)",
+  "window": "Chrome",
+  "foreground": false,
+  "path": ""
+ },
+ {
+  "kind": "Button",
+  "name": "Open Gemini in Chrome",
+  "window": "Chrome",
+  "foreground": false,
+  "path": ""
+ },
+ {
+  "kind": "Button",
+  "name": "Collapse tabs",
+  "window": "Chrome",
+  "foreground": false,
+  "path": ""
+ },
+ {
+  "kind": "Button",
+  "name": "LastPass",
+  "window": "Chrome",
+  "foreground": false,
+  "path": ""
+ },
+ {
+  "kind": "Button",
+  "name": "Extensions",
+  "window": "Chrome",
+  "foreground": false,
+  "path": ""
+ },
+ {
+  "kind": "Button",
+  "name": "Tab groups",
+  "window": "Chrome",
+  "foreground": false,
+  "path": "Bookmarks > Saved Tab Groups"
+ },
+ {
+  "kind": "Button",
+  "name": "Close this view",
+  "window": "Chrome",
+  "foreground": false,
+  "path": ""
+ },
+ {
+  "kind": "Button",
+  "name": "Close this view",
+  "window": "Chrome",
+  "foreground": false,
+  "path": ""
+ },
+ {
+  "kind": "Button",
+  "name": "Tab groups",
+  "window": "Chrome",
+  "foreground": false,
+  "path": ""
+ },
+ {
+  "kind": "Button",
+  "name": "AI Mode button, press Enter to ask AI Mode",
+  "window": "Chrome",
+  "foreground": false,
+  "path": ""
+ },
+ {
+  "kind": "MenuItem",
+  "name": "System",
+  "window": "Zed",
+  "foreground": false,
+  "path": "System"
+ }
+]

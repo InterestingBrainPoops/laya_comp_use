@@ -28,6 +28,24 @@ the code is shaped the way it is.
    and every option the model weighed. Do not add a pruning step without adding it to the
    debug overlay and the step log.
 
+## Measuring decider changes
+
+Any change to `brain/` (framing, question layout, shortlist, lexical rules, confidence,
+thresholds) is measured before and after with the same command, and both tables go in
+`docs/ARCHITECTURE.md`:
+
+```
+PYTHONHASHSEED=0 uv run python -m tests.eval.run -v
+```
+
+Read four numbers: broad semantic top-1 (accuracy the user feels), recall@fine_k (did
+pruning lose the answer), wrong+confident (acted instead of asking: the safety number),
+correct+asked (needless questions). A change that raises top-1 but raises wrong+confident
+is a regression. Add a case to `tests/eval/cases.py` for every real failure you fix, with
+an `EQUIV` entry when the screen has an equally correct control. Refresh
+`tests/eval/distractors.json` only deliberately (`uv run python -m tests.eval.cases`), and
+say so in the doc, because it changes every number.
+
 ## Keeping the docs aligned
 
 - Any change to a layer boundary, a decider rule, a config default, a measured number, or
