@@ -25,8 +25,9 @@ class FakePolicy:
         self.decisions = list(decisions)
         self.calls = []
 
-    def decide(self, goal, snap, history):
+    def decide(self, goal, snap, history, hint=None):
         self.calls.append(list(history))
+        self.hints = getattr(self, "hints", []) + [hint]
         return self.decisions.pop(0)
 
     def build_state(self, goal, snap, history, include_elements=False):
@@ -65,6 +66,7 @@ class FakeEvents:
 
 
 def _loop(decisions, replies=(), **cfg):
+    cfg.setdefault("done_confirmations", 1)  # most tests script a single 'done' reading
     c = Config(step_delay_s=0, **cfg)
     ev = FakeEvents(replies)
     ex = FakeExecutor()
@@ -124,6 +126,32 @@ def test_step_result_carries_merged_timings(tmp_path):
     assert {"parse_ms", "decide_ms", "act_ms"} <= set(tm) and "human_ms" not in tm
     kinds = [l.split('"kind": "')[1].split('"')[0] for l in loop.log.path.read_text(encoding="utf-8").splitlines()]
     assert kinds == ["session_start", "goal", "parsed", "decided", "acted", "step", "parsed", "decided", "step", "finished"]
+
+
+def test_hint_is_passed_to_decide_until_an_action_runs():
+    loop, ex, ev = _loop([_dec("click_1", EL, 0.2), _dec("click_1", EL, 0.95), _dec(ACTION_DONE, None, 0.9, done=0.9)],
+                         replies=["the file button"])
+    loop.run("x")
+    assert loop.policy.hints == [None, "the file button", None]  # hint used once, cleared after the click
+
+
+def test_hint_resolved_by_name_teaches_alias_for_the_original_goal():
+    named = _dec("click_1", EL, 0.95)
+    named.raw["_decided_by"] = "name match"
+    loop, ex, ev = _loop([_dec("click_1", EL, 0.2), named, _dec(ACTION_DONE, None, 0.9, done=0.9)], replies=["the file button"])
+    loop.run("open the thing")
+    assert ("remember", "open the thing", "File") in loop.policy.calls
+    assert any(m.startswith("learned: 'open the thing'") for m in ev.log)
+
+
+def test_done_needs_two_consecutive_confirmations():
+    """Session log: one 0.85 'done' right after a window switch ended the task wrongly."""
+    decs = [_dec("click_1", EL, 0.95, done=0.85), _dec("click_1", EL, 0.95, done=0.3), _dec("click_2", EL2, 0.95, done=0.9), _dec("click_2", EL2, 0.95, done=0.9)]
+    loop, ex, ev = _loop(decs, done_confirmations=2)
+    loop.run("x")
+    assert ex.done == ["click_1"]  # the lone 0.85 did not finish; the second reading dropped, so it acted
+    assert ev.finished.startswith("done after 1")
+    assert [r.note for r in ev.steps] == ["done? confirming", "clicked File", "done? confirming", "goal achieved"]
 
 
 def test_max_steps_gives_up():

@@ -136,8 +136,10 @@ control Google Chrome").
 
 ### 5a. Measured: before and after (tests/eval/run.py, 2026-09-21)
 
-16 cases (5 literal, 11 semantic), 103 real distractor elements from 11 windows,
-3 shuffles per case, `PYTHONHASHSEED=0`. Semantic = no word overlap with the answer.
+17 cases (6 literal, 11 semantic; the sixth literal case is the real GitHub tab title from
+the first session log), 103 real distractor elements from 11 windows, 3 shuffles per case,
+`PYTHONHASHSEED=0`. Semantic = no word overlap with the answer. Latest run: literal 18/18
+top-1 with 0 confident-wrong and 0 needless asks; semantic unchanged from the shipped row.
 
 | pipeline | narrow semantic top-1 | broad recall@8 | broad semantic top-1 | wrong + confident | correct + asked | ms/case |
 |---|---|---|---|---|---|---|
@@ -185,12 +187,40 @@ is a SplitButton whose centre (x=868) lands on the divider between its primary p
    `SetForegroundWindow`, restore if minimized), so the click lands on them and not on
    whatever covered them.
 
+### 5d. Lessons from the first real session log (2026-09-21)
+
+The user asked for "the github chrome tab". GitHub titles tabs `<path> at main · owner/repo`,
+so no element contained "github"; the tab was parsed every step but nothing could match
+it. The user then typed "open the laya_comp_use tab", which names it exactly, and the
+agent ignored that too. Four changes, each with a unit test named after the failure:
+
+- **Hints drive matching.** A free-text reply becomes `hint`; it replaces the goal for the
+  name match and prefixes the retrieval query until an action runs. Laya still sees the
+  goal, plus the hint as `user_clarification` in the state.
+- **The pool narrows to what the goal names.** A kind ("tab") and/or an app ("chrome")
+  restricts retrieval and the kind guarantees to matching elements when at least `fine_k`
+  remain. Before: 21 tabs across apps, and the Terminal's current tab won at p=0.77.
+  After: all 8 options are Chrome tabs and p(top) is 0.33, so the agent asks.
+- **Done needs `done_confirmations` (2) consecutive readings.** One p=0.85 right after a
+  window switch ended the task with nothing done.
+- **Window aliases are keyed by app** (`app:Chrome`), not by a title that changes with
+  the page. A full-match tie between differently named elements ('Save' vs 'Save As', two
+  tabs of one repo) goes to the tightest name instead of Laya.
+
+The remaining gap is knowledge: "github" will never match that tab title. The intended
+path is ask, pick or name it, alias learned, explicit from then on.
+
 ## 6. Loop and gating (`agent/loop.py`)
 
 Framework-free. `LoopEvents` is implemented by the console (`cli.py`) and by Qt signals
 (`ui/main_window.py`). The Qt adapter blocks the worker thread on a `threading.Event`
 until the user replies. Replies: a digit picks an option (and teaches an alias), `stop`
 aborts, anything else is a hint appended to the state's `previous_actions`.
+
+A free-text reply is a hint: it is passed to the next `decide` and cleared once an action
+runs. A digit picks from the list Laya weighed (all `fine_k` of them, plus "scroll down").
+"Done" ends the task only after `done_confirmations` consecutive readings above
+`done_threshold`; a single reading logs "looks done, checking once more" and re-parses.
 
 `need_text` calls `TextGenerator.generate`. v1's `NullTextGenerator` raises and the loop
 asks the user for the literal text. v2 swaps in `HFTextGenerator` (planned Qwen3-1.7B,
@@ -266,6 +296,7 @@ Reproduce with `uv run python -m laya_agent.cli "x" --dry-run --max-steps 1`, wh
 | 2026-09-21 | Confidence = p(top) of the calibrated pass; gate 0.6 | margin formula let p=0.55 through as 0.97; 0.6 gives 3/33 wrong+confident, 6/33 needless asks |
 | 2026-09-21 | Fuzzy or partial lexical matches never explicit; app-name ties go to the app window | "play the music" -> tab 'Web Player: Music'; "switch to spotify" -> Chrome tab titled Spotify |
 | 2026-09-21 | `tests/eval/` is the regression bar for `brain/` changes | every decider claim in this doc came from a single-screen probe before; now measured |
+| 2026-09-21 | Hints drive matching; pool narrowed by kind and app; done confirmed twice; window aliases by app; tightest-name tie rule | first real session log: exact hint ignored, wrong tab at p=0.77, false "done" at 0.85 |
 
 ## 11. Not done yet
 

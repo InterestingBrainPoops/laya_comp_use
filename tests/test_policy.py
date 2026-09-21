@@ -104,6 +104,69 @@ def test_same_name_tie_prefers_selected_element():
     assert d.element.id == 2 and d.raw["_decided_by"] == "name match"
 
 
+GITHUB_TAB = "laya_comp_use/docs/ARCHITECTURE.md at main · InterestingBrainPoops/laya_comp_use"
+
+
+def test_hint_drives_the_name_match():
+    """Session log: goal 'open github tab', hint 'open the laya_comp_use tab' was ignored."""
+    tabs = ["New Tab", "Coed dorm problem!! Pls help!!", "Silent_Coffeee (u/Silent_Coffeee) - Reddit", GITHUB_TAB]
+    policy = LayaPolicy(Config(alias_path=None, shortlist="chunks"), predict=_fake_predict("click_1"))
+    d = policy.decide("open github tab", _snap(tabs, kind="TabItem"), history=[], hint="open the laya_comp_use tab")
+    assert d.element.name == GITHUB_TAB and d.raw["_decided_by"] == "name match"
+
+
+def test_kind_named_in_goal_restricts_the_pool_when_plenty():
+    """23 tabs and 100 buttons: 'switch to the ... tab' must offer tabs, not buttons."""
+    from laya_agent.brain.retriever import EmbeddingRetriever
+    from tests.test_retriever import fake_embed
+
+    els = _els([f"Button {i}" for i in range(40)]) + [
+        UIElement(id=100 + i, kind="TabItem", name=f"Page {i}", rect=Rect(0, 0, 5, 5)) for i in range(20)
+    ]
+    snap = Snapshot(png=b"", width=1, height=1, window_title="Chrome", elements=els)
+    policy = LayaPolicy(Config(alias_path=None), predict=_fake_predict("click_1"), retriever=EmbeddingRetriever(Config(), embed=fake_embed))
+    d = policy.decide("switch to the github tab", snap, history=[])
+    kinds = {d.raw["_elements"][f"click_{i}"].kind for i in d.raw["_fine"]}
+    assert kinds == {"TabItem"} and len(d.raw["_fine"]) == policy.FINE_K
+
+
+def test_app_named_in_goal_restricts_the_pool():
+    """Live: 'switch to the github chrome tab' picked the Terminal's current tab at p=0.77."""
+    from laya_agent.brain.retriever import EmbeddingRetriever
+    from tests.test_retriever import fake_embed
+
+    els = [UIElement(id=i + 1, kind="TabItem", name=f"Term {i}", rect=Rect(0, 0, 5, 5), window="Terminal", selected=(i == 0)) for i in range(10)]
+    els += [UIElement(id=50 + i, kind="TabItem", name=f"Page {i}", rect=Rect(0, 0, 5, 5), window="Chrome", foreground=False) for i in range(12)]
+    snap = Snapshot(png=b"", width=1, height=1, window_title="Terminal", elements=els)
+    policy = LayaPolicy(Config(alias_path=None), predict=_fake_predict("click_1"), retriever=EmbeddingRetriever(Config(), embed=fake_embed))
+    d = policy.decide("switch to the github chrome tab", snap, history=[])
+    assert {d.raw["_elements"][f"click_{i}"].window for i in d.raw["_fine"]} == {"Chrome"}
+
+
+def test_full_match_tie_goes_to_the_tightest_name():
+    policy = LayaPolicy(Config(alias_path=None, shortlist="chunks"), predict=_fake_predict("click_1"))
+    d = policy.decide("save", _snap(["Save As", "Save", "Save All"]), history=[])
+    assert d.element.name == "Save" and d.raw["_decided_by"] == "name match"
+    tabs = [GITHUB_TAB, "InterestingBrainPoops/laya_comp_use", "New Tab"]
+    d = policy.decide("open the laya_comp_use tab", _snap(tabs, kind="TabItem"), history=[])
+    assert d.element.name == "InterestingBrainPoops/laya_comp_use" and d.raw["_decided_by"] == "name match"
+
+
+def test_window_alias_is_keyed_by_app(tmp_path):
+    from laya_agent.brain.aliases import AliasStore
+
+    store = AliasStore(tmp_path / "a.json")
+    policy = LayaPolicy(Config(alias_path=None, shortlist="chunks"), predict=_fake_predict("click_1"), aliases=store)
+    win = UIElement(id=1, kind="Window", name="New Tab - Google Chrome", rect=Rect(0, 0, 5, 5), window="Chrome")
+    policy.remember("switch to the browser", win)
+    assert store.as_dict() == {"app:Chrome": ["browser"]}
+    later = UIElement(id=1, kind="Window", name="Some other page - Google Chrome", rect=Rect(0, 0, 5, 5), window="Chrome")
+    ok = UIElement(id=2, kind="Button", name="OK", rect=Rect(0, 0, 5, 5))
+    snap = Snapshot(png=b"", width=1, height=1, window_title="x", elements=[later, ok])
+    d = policy.decide("switch to the browser", snap, history=[])
+    assert d.element is later and d.raw["_decided_by"] == "name match"
+
+
 def test_rank_boosts_kind_named_in_goal():
     els = _els(["Zzz", "Yyy"], kind="Button") + [UIElement(id=3, kind="TabItem", name="Xxx", rect=Rect(0, 0, 5, 5))]
     ranked = LayaPolicy(Config(alias_path=None, shortlist="chunks"), predict=_fake_predict("click_1")).rank_elements("switch to the next tab", els)

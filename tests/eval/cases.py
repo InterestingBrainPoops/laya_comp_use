@@ -30,6 +30,10 @@ CASES: list[tuple[str, str, list[UIElement], int]] = [
     ("literal", "click install github", els("TabItem:NandhaKishorM/laya", "TabItem:convaiinnovations/laya · Hugging Face", "Button:New Tab", "Button:Install GitHub"), 4),
     ("literal", "open a new tab", els("Button:New Tab", "Button:Close Tab", "Button:Tab search", "TabItem:Windows PowerShell", "Button:Minimize"), 1),
     ("literal", "press delete", els("MenuItem:Delete", "MenuItem:Rename", "MenuItem:Copy", "MenuItem:Paste"), 1),
+    # from a real session: GitHub titles its tabs '<path> at main · owner/repo', no word 'github'
+    ("literal", "open the laya_comp_use tab", els(
+        "TabItem:New Tab", "TabItem:Coed dorm problem!! Pls help!!", "TabItem:Silent_Coffeee (u/Silent_Coffeee) - Reddit",
+        "TabItem:laya_comp_use/docs/ARCHITECTURE.md at main · InterestingBrainPoops/laya_comp_use"), 4),
     # semantic: synonyms / intent, no word overlap with the right answer
     ("semantic", "log in", els("Hyperlink:Sign in", "Hyperlink:Register", "Hyperlink:Forgot password", "Button:Search"), 1),
     ("semantic", "go back to the previous page", els("Button:Back", "Button:Forward", "Button:Reload this page", "Button:Home"), 1),
@@ -51,6 +55,7 @@ EQUIV: dict[str, list[str]] = {
     "get rid of this file": ["delete"],
     "open the browser's settings": ["customize and control google chrome", "settings and more"],
     "type a web address": ["address and search bar", "address bar"],
+    "open the laya_comp_use tab": ["interestingbrainpoops/laya_comp_use"],  # the repo's other tab on the captured screen
 }
 
 

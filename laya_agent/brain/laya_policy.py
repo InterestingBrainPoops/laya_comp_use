@@ -58,25 +58,32 @@ class LayaPolicy:
         self._retrieved: list[int] = []
         self._sims: dict[int, float] = {}
         self._goal_tokens: list[str] = []
+        self._retrieve_ms = 0.0
         self.load_ms: float | None = None
         self.aliases = aliases if aliases is not None else AliasStore(cfg.alias_path)
         self.retriever: Retriever | None = make_retriever(cfg) if retriever == "auto" else retriever
 
     # -- public ---------------------------------------------------------------
-    def decide(self, goal: str, snap: Snapshot, history: list[str]) -> Decision:
+    def decide(self, goal: str, snap: Snapshot, history: list[str], hint: str | None = None) -> Decision:
+        """`hint`: the user's free-text reply when asked ("open the laya_comp_use tab"). It
+        names the target more precisely than the goal, so it drives the name match and the
+        retrieval query; the goal still frames Laya's question. Measured: a session where
+        the hint named the tab exactly and was ignored because it only reached Laya's state."""
         t0 = time.perf_counter()
         self._passes, self._laya_ms = 0, 0.0
-        self._retrieved, self._sims = [], {}
-        elements = self.rank_elements(goal, snap.elements)[: self.cfg.max_elements]
-        state = self.build_state(goal, snap, history)
-        lex = lexical_scores(goal, elements, self.aliases.as_dict())
-        self._goal_tokens = tokens(goal)
+        self._retrieved, self._sims, self._retrieve_ms = [], {}, 0.0
+        match_text = hint or goal
+        query = f"{hint}. {goal}" if hint else goal
+        elements = self.rank_elements(match_text, snap.elements)[: self.cfg.max_elements]
+        state = self.build_state(goal, snap, history, hint=hint)
+        lex = lexical_scores(match_text, elements, self.aliases.as_dict())
+        self._goal_tokens = tokens(match_text)
         by_lex = sorted(elements, key=lambda e: (lex[e.id], *self._tie_key(e)), reverse=True)
         explicit = self._explicit_match(by_lex, lex)
         lexical_ms = (time.perf_counter() - t0) * 1000
 
         t1 = time.perf_counter()
-        shortlist = self.shortlist(goal, state, elements, by_lex, lex)
+        shortlist = self.shortlist(query, state, elements, by_lex, lex, kinds=kinds_in_goal(match_text) | kinds_in_goal(goal))
         shortlist_ms = (time.perf_counter() - t1) * 1000
         fine = sorted(shortlist, key=lambda e: e.id)
         raw = self.predict(state, self._questions(fine, goal))
@@ -88,12 +95,12 @@ class LayaPolicy:
         if explicit is not None:
             # Lexical decides the element; Laya still informs done/need_text.
             action = f"click_{explicit.id}"
-            top = [(action, lex[explicit.id])] + [(a, p) for a, p in ranked if a != action][:4]
+            top = [(action, lex[explicit.id])] + [(a, p) for a, p in ranked if a != action][: self.FINE_K - 1]
             confidence = max(lex[explicit.id], 0.9)
             decided_by = "name match"
         else:
             action = ranked[0][0] if ranked else ACTION_SCROLL_DOWN
-            top = ranked[:5]
+            top = ranked[: self.FINE_K]  # everything Laya weighed: the human sees all of it when asked
             confidence = self.margin_confidence(ranked, float(ans["action"]["confidence"])) if ranked else 0.0
             decided_by = "laya"
         if need_text >= 0.8 and explicit is None:
@@ -118,6 +125,7 @@ class LayaPolicy:
             timings={
                 "lexical_ms": round(lexical_ms, 1),
                 "shortlist_ms": round(shortlist_ms, 1),
+                "retrieve_ms": round(self._retrieve_ms, 1),
                 "laya_passes": self._passes,
                 "laya_ms": round(self._laya_ms, 1),
                 "decide_ms": round((time.perf_counter() - t0) * 1000, 1),
@@ -125,8 +133,10 @@ class LayaPolicy:
         )
 
     def remember(self, goal: str, element: UIElement) -> None:
-        """The user picked `element` for `goal`: learn the alias."""
-        self.aliases.remember(goal, element.name)
+        """The user picked `element` for `goal`: learn the alias. Windows are keyed by app,
+        their titles change with the page or song (measured: an alias stored against
+        'New Tab - Google Chrome' could never match again)."""
+        self.aliases.remember(goal, f"app:{element.window}" if element.is_window and element.window else element.name)
 
     def ask(self, question: str, snap: Snapshot, goal: str = "", history: list[str] | None = None) -> float:
         """Freeform yes/no question about the current screen. Returns P(true)."""
@@ -161,6 +171,12 @@ class LayaPolicy:
         second = lex[rivals[0].id] if rivals else 0.0
         if best - second >= self.LEXICAL_MARGIN:
             return top
+        if second >= self.LEXICAL_DECIDE:
+            # Several differently-named elements match every goal word ('Save' vs 'Save As';
+            # two tabs of the same repo). The tightest name, fewest tokens beyond the goal's,
+            # is the literal reading; deferring to Laya here measured worse.
+            tied = [top] + [e for e in rivals if lex[e.id] >= self.LEXICAL_DECIDE]
+            return min(tied, key=lambda e: (len(tokens(e.name, keep_stop=True)), tied.index(e)))
         # "switch to spotify" ties the Spotify window with a Chrome tab titled 'Spotify - Web
         # Player' (which sorts first when it is Chrome's current tab). Naming an app is a
         # request for that app's window (measured live).
@@ -189,19 +205,25 @@ class LayaPolicy:
         return sorted(((a, round(v / z, 4)) for a, v in fused.items()), key=lambda kv: kv[1], reverse=True)
 
     # -- shortlisting -------------------------------------------------------------
-    def shortlist(self, goal: str, state: dict, elements: list[UIElement], by_lex: list[UIElement], lex: dict[int, float]) -> list[UIElement]:
+    def shortlist(self, goal: str, state: dict, elements: list[UIElement], by_lex: list[UIElement], lex: dict[int, float], kinds: set[str] | None = None) -> list[UIElement]:
         """Cut to FINE_K. Guaranteed: lexical hits and kind matches. Rest, by config:
         "retriever": embedding top-`retriever_top`, order-independent, then one Laya cut.
-        "chunks":    Laya over chunks of `coarse_chunk` keeping `coarse_keep` each, then a cut."""
+        "chunks":    Laya over chunks of `coarse_chunk` keeping `coarse_keep` each, then a cut.
+        If the goal names a kind ("tab") and the screen has at least FINE_K of that kind, only
+        that kind is retrieved: with 23 open tabs the human must see tabs, not buttons."""
         if len(elements) <= self.FINE_K:
             return list(elements)
-        guaranteed = self._guaranteed(goal, elements, by_lex, lex)
+        kinds = kinds if kinds is not None else kinds_in_goal(goal)
+        pool = self._pool(elements, kinds)
+        guaranteed = self._guaranteed(goal, pool, by_lex, lex, kinds)
         kept: dict[int, UIElement] = {e.id: e for e in guaranteed}
         chunk = max(self.FINE_K, self.cfg.coarse_chunk)
         if self.retriever is not None:
             # Fill to FINE_K in similarity order. No Laya cut pass: that would be another
             # 11+ option ranking, which is exactly what the retriever replaces.
-            ranked = self.retriever.rank(goal, elements)
+            t = time.perf_counter()
+            ranked = self.retriever.rank(goal, pool)
+            self._retrieve_ms = (time.perf_counter() - t) * 1000
             self._sims = {e.id: s for e, s in ranked}
             self._retrieved = [e.id for e, _ in ranked[: self.cfg.retriever_top]]
             for e, _sim in ranked:
@@ -215,13 +237,33 @@ class LayaPolicy:
                 kept.setdefault(e.id, e)
         return self._final_cut(state, goal, elements, kept, guaranteed, chunk)
 
-    def _guaranteed(self, goal, elements, by_lex, lex) -> list[UIElement]:
-        kinds = kinds_in_goal(goal)
+    def _pool(self, elements: list[UIElement], kinds: set[str]) -> list[UIElement]:
+        """Narrow the retrieval pool by what the goal names, when enough remain:
+        a kind ("tab" -> TabItems) and/or an app ("chrome" -> elements of Chrome windows).
+        Measured: "switch to the github chrome tab" chose the Terminal's current tab at
+        p=0.77 when the pool was all 21 tabs across apps."""
+        goal_toks = set(self._goal_tokens)
+        pool = elements
+        if kinds:
+            by_kind = [e for e in pool if e.kind in kinds]
+            if len(by_kind) >= self.FINE_K:
+                pool = by_kind
+        apps = {e.window for e in elements if e.window and set(tokens(e.window)) & goal_toks}
+        if apps:
+            by_app = [e for e in pool if e.window in apps]
+            if len(by_app) >= self.FINE_K:
+                pool = by_app
+        return pool
+
+    def _guaranteed(self, goal, pool, by_lex, lex, kinds: set[str] | None = None) -> list[UIElement]:
+        """Lexical hits from anywhere on screen (they are named); kind matches only from the
+        narrowed pool (otherwise ten Terminal tabs fill the list for "the github chrome tab")."""
+        kinds = kinds if kinds is not None else kinds_in_goal(goal)
         out: list[UIElement] = []
         for e in by_lex:
             if lex[e.id] >= 0.5 and len(out) < self.FINE_K // 2:
                 out.append(e)
-        for e in elements:
+        for e in pool:
             if e.kind in kinds and e not in out and len(out) < self.FINE_K - 2:
                 out.append(e)
         return out
@@ -261,12 +303,14 @@ class LayaPolicy:
 
     kinds_in_goal = staticmethod(kinds_in_goal)
 
-    def build_state(self, goal: str, snap: Snapshot, history: list[str], include_elements: bool = False) -> dict:
+    def build_state(self, goal: str, snap: Snapshot, history: list[str], include_elements: bool = False, hint: str | None = None) -> dict:
         state: dict[str, Any] = {
             "goal": goal,
             "window": snap.window_title[:80],
             "previous_actions": history[-self.cfg.history_len:],
         }
+        if hint:
+            state["user_clarification"] = hint
         if include_elements:
             state["visible"] = [e.label() for e in snap.elements[:40]]
         return state

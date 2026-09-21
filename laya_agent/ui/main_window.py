@@ -30,7 +30,7 @@ BOX_COLORS = ["#ff3b30", "#ff9500", "#ffcc00", "#34c759", "#5ac8fa"]
 # (header, timings key). Every layer reports into StepResult.timings; text_gen is the v2 slot.
 TIMING_COLUMNS = [
     ("step", "step"), ("screenshot", "screenshot_ms"), ("uia", "uia_ms"), ("nodes", "uia_nodes"),
-    ("lexical", "lexical_ms"), ("laya passes", "laya_passes"), ("laya", "laya_ms"), ("decide", "decide_ms"),
+    ("lexical", "lexical_ms"), ("retrieve", "retrieve_ms"), ("laya passes", "laya_passes"), ("laya", "laya_ms"), ("decide", "decide_ms"),
     ("human", "human_ms"), ("text gen", "text_gen_ms"), ("act", "act_ms"), ("total", "total_ms"), ("note", "note"),
 ]
 SUMMED = ("parse_ms", "decide_ms", "human_ms", "act_ms")
@@ -279,7 +279,8 @@ class MainWindow(QMainWindow):
             self._say("agent", "<b>What should I type?</b> Send the exact text.")
             return
         lines = "".join(f"<br>&nbsp;&nbsp;<b>{i}</b>. {label} ({p:.2f})" for i, (label, p) in enumerate(req.options, 1))
-        self._say("agent", f"<b>{req.reason}.</b> Pick a number, give a hint, or say stop.{lines}")
+        self._say("agent", f"<b>{req.reason}.</b> Pick a number, or describe the control by its name "
+                           f"(e.g. <i>the laya_comp_use tab</i>), or say stop.{lines}")
         self.activateWindow()
 
     @Slot(str)

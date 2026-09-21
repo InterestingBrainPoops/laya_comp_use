@@ -11,7 +11,8 @@ class Config:
     device: str | None = None  # None -> laya picks cuda if available
     head_max_len: int = 320  # option budget; state gets the rest of 512 tokens
     conf_threshold: float = 0.6  # p(top) below this asks the human; 0.6 measured: 3/33 wrong+confident, 6/33 needless asks
-    done_threshold: float = 0.8  # noul P(goal achieved) above this ends the task
+    done_threshold: float = 0.8  # noul P(goal achieved) above this ends the task ...
+    done_confirmations: int = 2  # ... when seen this many consecutive steps (one 0.85 after a window switch ended a task wrongly)
     max_elements: int = 120  # hard cap on elements considered per step (bounds latency)
     shortlist: str = "retriever"  # "retriever" (embeddings, order-independent) | "chunks" (Laya over chunks)
     retriever_model: str = "sentence-transformers/all-MiniLM-L6-v2"

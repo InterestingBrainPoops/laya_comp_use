@@ -63,6 +63,8 @@ class AgentLoop:
         repeats = 0
         step = 0
         actions = 0
+        done_streak = 0
+        hint: str | None = None  # the user's last free-text reply; drives matching until an action runs
         while step < self.cfg.max_steps:
             if self.stop_event.is_set():
                 return self._finish("stopped by user", actions)
@@ -76,16 +78,22 @@ class AgentLoop:
             self.log.parsed(step, snap)
 
             t = time.perf_counter()
-            decision = self.policy.decide(goal, snap, history)
+            decision = self.policy.decide(goal, snap, history, hint=hint)
             tm["decide_ms"] = _ms(t)
             tm.update({k: v for k, v in decision.timings.items() if k != "decide_ms"})
             self.last_snapshot, self.last_decision = snap, decision
             self.log.decided(step, goal, decision)
             self._log_decision(step, snap, decision)
 
-            if decision.done_prob >= self.cfg.done_threshold:
+            done_streak = done_streak + 1 if decision.done_prob >= self.cfg.done_threshold else 0
+            if done_streak >= self.cfg.done_confirmations:
                 self._emit(StepResult(step, snap, decision, executed=False, note="goal achieved", timings=tm))
                 return self._finish(f"done after {actions} action(s)", actions)
+            if done_streak:
+                self.events.on_log(f"looks done (p={decision.done_prob:.2f}), checking once more")
+                self._emit(StepResult(step, snap, decision, executed=False, note="done? confirming", timings=tm))
+                time.sleep(self.cfg.step_delay_s)
+                continue
 
             repeats = repeats + 1 if decision.action == last_action else 0
             needs_human = (
@@ -104,6 +112,7 @@ class AgentLoop:
                     return self._finish("stopped by user", actions)
                 picked = self._pick(reply, decision)
                 if picked is None:
+                    hint = reply
                     history.append(f"user hint: {reply}")
                     self._emit(StepResult(step, snap, decision, executed=False, note="hint", timings=tm))
                     repeats = 0
@@ -111,9 +120,9 @@ class AgentLoop:
                     continue
                 decision = picked
                 if decision.element is not None:
-                    self.policy.remember(goal, decision.element)
-                    self.events.on_log(f"learned: '{goal}' -> {decision.element.label()}")
-                    self.log.event("alias_learned", goal=goal, element=decision.element)
+                    self.policy.remember(hint or goal, decision.element)
+                    self.events.on_log(f"learned: '{hint or goal}' -> {decision.element.label()}")
+                    self.log.event("alias_learned", goal=hint or goal, element=decision.element)
 
             if decision.action == ACTION_DONE:
                 self._emit(StepResult(step, snap, decision, executed=False, note="done", timings=tm))
@@ -126,6 +135,13 @@ class AgentLoop:
                 return self._finish("stopped by user", actions)
             self.log.acted(step, note, tm["act_ms"])
             actions += 1
+            if hint and decision.element is not None and decision.raw.get("_decided_by") == "name match":
+                # The hint named it; remember the original goal's words for this element so
+                # "the github chrome tab" is a name match next time.
+                self.policy.remember(goal, decision.element)
+                self.events.on_log(f"learned: '{goal}' -> {decision.element.label()}")
+                self.log.event("alias_learned", goal=goal, element=decision.element)
+            hint = None
             history.append(note)
             last_action = decision.action
             self._emit(StepResult(step, snap, decision, executed=True, note=note, timings=tm))

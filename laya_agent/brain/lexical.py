@@ -61,8 +61,9 @@ def score_element(goal_tokens: list[str], e: UIElement, extra_names: list[str] =
         return 0.0
     app_toks = set(tokens(e.window, keep_stop=True)) if e.window else set()
     if e.is_window:
-        name_toks = app_toks
-        alt_toks = {t for n in [e.name, *extra_names] for t in tokens(n, keep_stop=True)} - app_toks
+        # learned aliases ("browser" -> app:Chrome) count at app strength, the title does not
+        name_toks = app_toks | {t for n in extra_names for t in tokens(n, keep_stop=True)}
+        alt_toks = set(tokens(e.name, keep_stop=True)) - name_toks
         alt_scale = WINDOW_BY_TITLE
     else:
         name_toks = {t for n in [e.name, *extra_names] for t in tokens(n, keep_stop=True)}
@@ -124,7 +125,10 @@ def lexical_scores(goal: str, elements: list[UIElement], aliases: dict[str, list
     kind_words = {w for w in tokens(goal, keep_stop=True) if w in KIND_WORDS_IN_GOAL}
     out = {}
     for e in elements:
-        s = score_element(gt, e, aliases.get(e.name, []))
+        extra = list(aliases.get(e.name, []))
+        if e.is_window and e.window:
+            extra += aliases.get(f"app:{e.window}", [])
+        s = score_element(gt, e, extra)
         # "open a new tab" -> button 'New Tab': the kind word is part of the name, no penalty.
         name_has_kind_word = bool(kind_words & set(tokens(e.name, keep_stop=True)))
         if kinds and e.kind not in kinds and not name_has_kind_word:
