@@ -42,6 +42,7 @@ def token_similarity(a: str, b: str) -> float:
 
 SELECTED_WORDS = {"current", "active", "selected", "focused"}  # extra names for selected elements
 PARTIAL_CAP = 0.7  # any goal word unmatched: strong shortlist candidate, never an explicit decision
+FUZZY_CAP = 0.85  # a containment/difflib match ("play" in "Player") never makes an explicit decision
 WINDOW_ONLY = 0.4  # element whose only matches are its owning window's name ("spotify" -> Play button)
 WINDOW_BY_TITLE = 0.7  # a Window matched through its title, not its app name ("new tab" -> Chrome window)
 
@@ -89,6 +90,10 @@ def score_element(goal_tokens: list[str], e: UIElement, extra_names: list[str] =
     score = 0.4 * strength + 0.6 * coverage + (0.2 if distinctive else 0.0)
     if coverage < 1.0:
         score = min(score, PARTIAL_CAP)
+    if any(0 < b < 1.0 for b in best):
+        # "play the music" vs tab 'Spotify - Web Player: Music ...' matched play~Player and
+        # music=Music and was declared explicit over the real Play button (measured).
+        score = min(score, FUZZY_CAP)
     if all(a for a, b in zip(via_alt, best) if b > 0):
         score *= alt_scale
     elif e.is_window and any(via_alt):

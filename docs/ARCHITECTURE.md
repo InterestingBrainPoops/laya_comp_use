@@ -20,7 +20,7 @@ ModernBERT-large encoder with a decision head. Facts that drive the design:
 | Never generates text. One forward pass returns a label with calibrated probabilities. | Cannot type URLs or notes. Needs a separate generator (v2). |
 | 512-token window: `[CLS] instructions [SEP] options [SEP] state [SEP]`. Options get `head_max_len` tokens, the state gets the rest. | Option labels carry the element description. The state stays small (goal, window, last actions). |
 | Calibration temperature for 11+ options is 0.1 (near-argmax). 6-10 options use 1.0. | Only a 10-option pass gives usable confidence. Hence coarse-to-fine. |
-| Trained on email/ticket triage. Weak at literal string matching (measured: "NandhaKishorM" vs tab `NandhaKishorM/laya` scored 0.46 against 0.45 for the other tab). | Explicit names are resolved by a deterministic matcher, not by Laya. |
+| Trained on email/ticket triage. With the right framing it judges relevance well (100% on 16 narrow cases, synonyms included) but it is order-sensitive in 11+ option lists and cannot know app-specific names. | Deterministic matcher for explicit names and learned aliases; an order-independent retriever before Laya; Laya decides among ≤ 10. |
 | ~35ms per pass on the RTX 3050, ~300ms on CPU. | Several passes per step are affordable. |
 
 ## 3. Layers
@@ -95,32 +95,66 @@ step if it matters.
 
 ## 5. Decision (`brain/`)
 
-Order of deciders in `LayaPolicy.decide`:
+Retriever, then decider, then gate. Order in `LayaPolicy.decide`:
 
 1. **Lexical** (`lexical.py`). Goal tokens minus UI stop words are matched against element
    name tokens (exact 1.0, containment 0.85, difflib ≥ 0.8). Score blends strength and
-   coverage; a distinctive token ≥ 6 chars matching exactly is decisive. If the goal names
-   a kind ("tab", "button", "link"), other kinds are multiplied by 0.6 unless the kind word
-   is part of the element's own name ("New Tab"). Best ≥ 0.9 with a 0.25 margin over the
-   nearest differently-named rival decides without Laya. Same-named duplicates are not
-   rivals; the first in tree order wins.
-2. **Laya, coarse-to-fine.** Elements in chunks of `coarse_chunk` (20), keep `coarse_keep`
-   (3) per chunk. Guaranteed survivors: lexical ≥ 0.5 and kind matches. Merge, cut again
-   if needed, then the fine pass: 8 elements + `done` + `scroll_down` = 10 options.
-   `need_text` is a separate yes/no question, not an option, so it does not steal
-   probability from elements.
-3. **Ask the human.** Gate reads only the fine pass. Confidence is the top-1 margin
-   (`margin_confidence`), not Laya's entropy score, which collapses with many options.
-   Threshold `conf_threshold` (0.7). Also asks on two identical consecutive actions and on
-   `done` with P(done) < 0.5.
+   coverage. Explicit (≥ 0.9, and 0.25 clear of the nearest differently-named rival) only
+   when **every** goal word matches **exactly**: a partial match caps at 0.7 and a fuzzy
+   match at 0.85, so "play the music" can no longer lock onto a tab titled
+   "Web Player: Music" over the Play button (measured, 2026-09-21). If the goal names a
+   kind ("tab", "button"), other kinds are multiplied by 0.6 unless the kind word is in the
+   element's own name ("New Tab"). Same-named duplicates are not rivals; the order is:
+   front window first (Terminal's 'New Tab' button over Chrome's tab named 'New Tab'), an
+   already-selected tab last (clicking it does nothing), a selected control otherwise first
+   (the current tab's own 'Close Tab'), then tree order. If every goal word matches an
+   app's name, that app's window wins the tie against a browser tab titled after the app.
+2. **Retriever** (`retriever.py`). Sentence-embedding similarity (all-MiniLM-L6-v2, 22M
+   params, ~10ms for 100 labels on the GPU) between the goal and every element label.
+   Order-independent. The final candidate list is: lexical hits (≥ 0.5) and kind matches
+   first, then the most similar elements until `fine_k` (8). No Laya pass in this stage.
+   The previous design ran Laya over chunks of 20 and kept 3 per chunk; whether a target
+   survived depended on which 19 elements it was shuffled beside, and it cost 5-8 passes.
+3. **Laya, one pass.** The 8 candidates are the **only** options of one `choice`
+   question with the generic framing ("which single action moves closest to completing
+   the goal?"). "Is the goal already satisfied?" and "does the next step need typing?" are
+   separate `noul` questions in the same forward pass. Putting `done` and `scroll` in the
+   option list let them absorb the probability mass (narrow semantic top-1 36% with them,
+   100% without). Scrolling is offered to the human in the options list, never chosen
+   automatically.
+4. **Gate.** Confidence is p(top) from that pass, which runs in Laya's calibrated 6-10
+   option bucket. Not a margin formula (an earlier one turned 0.55 into 0.97) and not
+   Laya's entropy score (collapses with option count). `conf_threshold` 0.6. Also asks on
+   two identical consecutive actions.
 
 **Aliases** (`aliases.py`). A human pick stores the goal's tokens as extra names for the
 chosen element in `.laya_aliases.json`. The lexical matcher reads them, so a vague goal
-becomes explicit after one correction. This is the intended way the agent gets better.
+becomes explicit after one correction. This is how the two remaining failure classes get
+fixed: knowledge Laya cannot have ("switch to the github tab" when the tab is titled
+`NandhaKishorM/laya`; "open the browser's settings" when Chrome calls it "Customize and
+control Google Chrome").
 
-Instruction wording (measured on the Chrome tab strip): putting the goal inside the
-question text ("The user asked: ... Which screen element is the user asking to click?")
-beats a generic "which action moves closest to the goal" framing.
+### 5a. Measured: before and after (tests/eval/run.py, 2026-09-21)
+
+16 cases (5 literal, 11 semantic), 103 real distractor elements from 11 windows,
+3 shuffles per case, `PYTHONHASHSEED=0`. Semantic = no word overlap with the answer.
+
+| pipeline | narrow semantic top-1 | broad recall@8 | broad semantic top-1 | wrong + confident | correct + asked | ms/case |
+|---|---|---|---|---|---|---|
+| before: goal-in-question framing, done/scroll as options, Laya chunks | 36% | 70% | 24% | n/a (margin conf) | n/a | 2691 |
+| step 1: generic framing, elements-only options, separate nouls | 100% | 82% | 52% | | | 1420 |
+| step 2: + embedding retriever, no Laya cut, fine_k 8 | 100% | 88% | 73% | 3/33 | 9/33 @0.7 | 155 |
+| step 2 with gate 0.6 (shipped) | 100% | 88% | 73% | 3/33 | 6/33 | 155 |
+
+Literal cases: 100% top-1 and recall throughout. The 3 confident-wrong cases are all
+"switch to the github tab" choosing the page button "Install GitHub" (p 0.79-1.0): the
+knowledge class above, fixed by one alias. Fusion of retriever similarity into the final
+ranking (`fusion_weight`) moved top-1 by ±1 case across settings, within noise, so it ships
+at 0. Chunk shortlisting with the new framing scores 67% / 79% recall at 446ms: the
+retriever is worth +6 points and 3x speed on its own.
+
+What this eval cannot tell you: it is 16 hand-written cases with synthetic labels for the
+targets. Treat it as a regression bar, not a benchmark. Add a case for every real failure.
 
 ### 5b. Lexical scoring across windows
 
@@ -227,6 +261,11 @@ Reproduce with `uv run python -m laya_agent.cli "x" --dry-run --max-steps 1`, wh
 | 2026-09-20 | Timings live on the dataclasses; loop merges; JSONL session log written only by the loop | one source of numbers for the UI tab, CLI, and log; layers stay side-effect free |
 | 2026-09-20 | Win32 `EnumWindows` for window enumeration | the timing tab showed 4.0s of every parse was the UIA desktop-root walk |
 | 2026-09-20 | Warm up with real question shapes | first decision paid 500ms of kernel setup |
+| 2026-09-21 | Generic framing; elements are the only options; done/need_text as separate nouls | done/scroll options absorbed the mass: narrow semantic top-1 36% -> 100% |
+| 2026-09-21 | Embedding retriever replaces Laya chunk passes; no post-retrieval Laya cut | chunk survival depended on shuffle order; broad top-1 52% -> 73%, 1420 -> 155 ms |
+| 2026-09-21 | Confidence = p(top) of the calibrated pass; gate 0.6 | margin formula let p=0.55 through as 0.97; 0.6 gives 3/33 wrong+confident, 6/33 needless asks |
+| 2026-09-21 | Fuzzy or partial lexical matches never explicit; app-name ties go to the app window | "play the music" -> tab 'Web Player: Music'; "switch to spotify" -> Chrome tab titled Spotify |
+| 2026-09-21 | `tests/eval/` is the regression bar for `brain/` changes | every decider claim in this doc came from a single-screen probe before; now measured |
 
 ## 11. Not done yet
 

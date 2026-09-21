@@ -50,16 +50,21 @@ layer's internals.
 
 ## How a decision is made
 
-1. **Name match** (`brain/lexical.py`). If your goal names an element ("the NandhaKishorM
-   tab", "open a new tab"), a deterministic token matcher decides. Laya is a triage model
-   and cannot do literal string matching reliably, so explicit references never reach it.
-   Saying a kind ("tab", "button", "link") penalises other kinds.
-2. **Laya** for the vague cases. Shortlisting runs Laya over chunks of 20 elements, keeping
-   3 per chunk plus every name/kind hit, then a final pass over 8 elements + done/scroll in
-   the 10-option bucket where Laya's probabilities are calibrated (its 11+ option temperature
-   is 0.1, near-argmax, so only the final pass feeds the confidence gate).
-3. **Ask you** when neither is confident. Your pick is saved to `.laya_aliases.json`, so
+1. **Name match** (`brain/lexical.py`). If every word of your goal matches an element's
+   name exactly ("the NandhaKishorM tab", "open a new tab", "switch to spotify"), a
+   deterministic matcher decides. Saying a kind ("tab", "button") penalises other kinds.
+2. **Retrieve** (`brain/retriever.py`). Sentence embeddings score every element on screen
+   against the goal, order-independently, in ~10ms. Name and kind hits plus the most
+   similar elements form 8 candidates.
+3. **Laya** picks among those 8 in one pass, in the option range where its probabilities
+   are calibrated. "Is it already done?" and "does this need typing?" are separate
+   questions, never competing options.
+4. **Ask you** when p(top) is below 0.6. Your pick is saved to `.laya_aliases.json`, so
    "github tab" maps to that tab's title next time and step 1 resolves it.
+
+Measured on 16 cases against 103 real distractors: 73% semantic top-1, 100% literal, 155ms
+per decision, and the only confident mistakes are the knowledge cases an alias fixes.
+Rerun with `PYTHONHASHSEED=0 uv run python -m tests.eval.run -v`.
 
 ## Seeing what the agent sees
 

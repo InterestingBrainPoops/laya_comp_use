@@ -50,9 +50,33 @@ def test_goal_naming_element_and_app_prefers_the_element():
     assert s[4] > s[3] and s[4] >= 0.9
 
 
+def test_same_name_tie_prefers_front_window_and_not_an_active_tab():
+    """Live: 'open a new tab' with Terminal in front picked Chrome's current tab named 'New Tab'."""
+    term_btn = UIElement(id=9, kind="Button", name="New Tab", rect=R, hwnd=55, window="Terminal", foreground=True)
+    chrome_tab = UIElement(id=10, kind="TabItem", name="New Tab", rect=R, hwnd=11, window="Chrome", foreground=False, selected=True)
+    chrome_btn = UIElement(id=11, kind="Button", name="New Tab", rect=R, hwnd=11, window="Chrome", foreground=False)
+    policy = LayaPolicy(Config(alias_path=None, shortlist="chunks"), predict=_fake_predict("click_10"))
+    snap = Snapshot(png=b"", width=1, height=1, window_title="t", elements=[chrome_tab, chrome_btn, term_btn])
+    assert policy.decide("open a new tab", snap, history=[]).element is term_btn
+    # Chrome itself in front: its New Tab button, not its already-open 'New Tab' tab
+    snap2 = Snapshot(png=b"", width=1, height=1, window_title="c", elements=[
+        UIElement(id=1, kind="TabItem", name="New Tab", rect=R, hwnd=11, window="Chrome", selected=True),
+        UIElement(id=2, kind="Button", name="New Tab", rect=R, hwnd=11, window="Chrome"),
+    ])
+    assert policy.decide("open a new tab", snap2, history=[]).element.kind == "Button"
+
+
+def test_app_window_wins_tie_with_a_tab_titled_after_the_app():
+    """Live: 'switch to spotify' tied the Spotify app window with a Chrome tab 'Spotify - Web Player'."""
+    tab = UIElement(id=8, kind="TabItem", name="Spotify - Web Player: Music for everyone", rect=R, hwnd=11, window="Chrome", foreground=True, selected=True)
+    snap = Snapshot(png=b"", width=1, height=1, window_title="x", elements=[CHROME_WIN, NEW_TAB, tab, SONG_WIN, PLAY])
+    d = LayaPolicy(Config(alias_path=None, shortlist="chunks"), predict=_fake_predict("click_8")).decide("switch to spotify", snap, history=[])
+    assert d.element is SONG_WIN and d.raw["_decided_by"] == "name match"
+
+
 def test_policy_switches_window_by_name():
     snap = Snapshot(png=b"", width=1, height=1, window_title="GitHub - Google Chrome", elements=ALL, windows=["GitHub - Google Chrome", "Spotify Premium", "Discord"])
-    d = LayaPolicy(Config(alias_path=None), predict=_fake_predict("click_2")).decide("open discord", snap, history=[])
+    d = LayaPolicy(Config(alias_path=None, shortlist="chunks"), predict=_fake_predict("click_2")).decide("open discord", snap, history=[])
     assert d.element is DISCORD_MIN and d.raw["_decided_by"] == "name match"
 
 
