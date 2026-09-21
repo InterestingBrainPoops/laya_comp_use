@@ -1,7 +1,7 @@
 from laya_agent.brain.laya_policy import LayaPolicy
 from laya_agent.brain.text_gen import NullTextGenerator, TextNeedsHuman, make_text_generator
 from laya_agent.config import Config
-from laya_agent.models import ACTION_DONE, META_ACTIONS, Rect, Snapshot, UIElement
+from laya_agent.models import Rect, Snapshot, UIElement
 
 import pytest
 
@@ -36,27 +36,28 @@ def _click_keys(call):
 
 def test_decide_picks_element_and_exposes_top_k():
     fake = _fake_predict("click_2")
-    policy = LayaPolicy(Config(alias_path=None), predict=fake)
+    policy = LayaPolicy(Config(alias_path=None, shortlist="chunks"), predict=fake)
     d = policy.decide("open the edit menu", _snap(["File", "Edit", "View"]), history=[])
     assert d.action == "click_2" and d.element.name == "Edit" and d.is_click
     assert d.top_k[0][0] == "click button 'Edit'" and abs(d.top_k[0][1] - 0.7) < 1e-6
     assert d.confidence >= 0.7
     state, questions = fake.calls[0]
     assert state["goal"] == "open the edit menu" and state["window"] == "Notepad"
-    assert {"done", "scroll_down"} <= set(questions["action"]["criteria"])
-    assert "need_text" in questions  # asked as a separate yes/no, not as an option
+    assert all(k.startswith("click_") for k in questions["action"]["criteria"])  # elements are the only options
+    assert questions["done"]["type"] == "noul" and questions["need_text"]["type"] == "noul"
+    assert d.top_actions[-1] == "scroll_down"  # offered to the human, never auto-chosen
     assert set(d.raw["_shortlist"]) == {1, 2, 3} and d.raw["_fine"] == [1, 2, 3]
 
 
-def test_decide_meta_action_has_no_element():
-    policy = LayaPolicy(Config(alias_path=None), predict=_fake_predict(ACTION_DONE, done=0.95))
+def test_done_is_a_separate_probability_not_an_action():
+    policy = LayaPolicy(Config(alias_path=None, shortlist="chunks"), predict=_fake_predict("click_1", done=0.95))
     d = policy.decide("nothing", _snap(["File"]), history=[])
-    assert d.action == ACTION_DONE and d.element is None and d.done_prob == 0.95
+    assert d.done_prob == 0.95 and d.action == "click_1"  # the loop reads done_prob against done_threshold
 
 
 def test_single_pass_when_few_elements():
     fake = _fake_predict("click_1")
-    LayaPolicy(Config(alias_path=None), predict=fake).decide("x", _snap(["A", "B"]), history=[])
+    LayaPolicy(Config(alias_path=None, shortlist="chunks"), predict=fake).decide("x", _snap(["A", "B"]), history=[])
     assert len(fake.calls) == 1
 
 
@@ -64,19 +65,19 @@ def test_shortlist_uses_laya_over_chunks_and_keeps_winner_without_keyword():
     """96 tabs named by page title; goal says 'github' but the tab is 'NandhaKishorM/laya'."""
     names = [f"Page {i}" for i in range(95)] + ["NandhaKishorM/laya"]
     fake = _fake_predict("click_96")
-    policy = LayaPolicy(Config(alias_path=None, coarse_chunk=20, coarse_keep=3), predict=fake)
+    policy = LayaPolicy(Config(alias_path=None, shortlist="chunks", coarse_chunk=20, coarse_keep=3), predict=fake)
     d = policy.decide("switch to the github tab", _snap(names, kind="TabItem"), history=[])
     assert d.element is not None and d.element.name == "NandhaKishorM/laya"
-    chunk_calls = [c for c in fake.calls if len(_click_keys(c)) > LayaPolicy.FINE_K]
+    chunk_calls = [c for c in fake.calls if len(_click_keys(c)) > policy.FINE_K]
     assert len(chunk_calls) >= 5  # 96 / 20 chunks, then a merge cut
-    assert len(_click_keys(fake.calls[-1])) == LayaPolicy.FINE_K  # calibrated fine pass
-    assert 96 in d.raw["_fine"] and len(d.raw["_fine"]) == LayaPolicy.FINE_K
+    assert len(_click_keys(fake.calls[-1])) == policy.FINE_K  # calibrated fine pass
+    assert 96 in d.raw["_fine"] and len(d.raw["_fine"]) == policy.FINE_K
 
 
 def test_keyword_hits_survive_shortlist():
     names = [f"Thing {i}" for i in range(30)] + ["Save As"]
     fake = _fake_predict("click_1")  # Laya "prefers" other things; keyword must still survive
-    policy = LayaPolicy(Config(alias_path=None), predict=fake)
+    policy = LayaPolicy(Config(alias_path=None, shortlist="chunks"), predict=fake)
     d = policy.decide("save as", _snap(names), history=[])
     assert 31 in d.raw["_fine"]
 
@@ -88,7 +89,7 @@ def test_kind_named_in_goal_survives_to_fine_pass():
         UIElement(id=32, kind="TabItem", name="Hugging Face", rect=Rect(6, 0, 11, 5)),
     ]
     snap = Snapshot(png=b"", width=1, height=1, window_title="Chrome", elements=els)
-    d = LayaPolicy(Config(alias_path=None), predict=_fake_predict("click_1")).decide("switch to the github tab", snap, history=[])
+    d = LayaPolicy(Config(alias_path=None, shortlist="chunks"), predict=_fake_predict("click_1")).decide("switch to the github tab", snap, history=[])
     assert {31, 32} <= set(d.raw["_fine"])
 
 
@@ -99,13 +100,13 @@ def test_same_name_tie_prefers_selected_element():
         UIElement(id=2, kind="Button", name="Close Tab", rect=Rect(5, 0, 6, 1), selected=True),
     ]
     snap = Snapshot(png=b"", width=1, height=1, window_title="Terminal", elements=els)
-    d = LayaPolicy(Config(alias_path=None), predict=_fake_predict("click_1")).decide("close this tab", snap, history=[])
+    d = LayaPolicy(Config(alias_path=None, shortlist="chunks"), predict=_fake_predict("click_1")).decide("close this tab", snap, history=[])
     assert d.element.id == 2 and d.raw["_decided_by"] == "name match"
 
 
 def test_rank_boosts_kind_named_in_goal():
     els = _els(["Zzz", "Yyy"], kind="Button") + [UIElement(id=3, kind="TabItem", name="Xxx", rect=Rect(0, 0, 5, 5))]
-    ranked = LayaPolicy(Config(alias_path=None), predict=_fake_predict("click_1")).rank_elements("switch to the next tab", els)
+    ranked = LayaPolicy(Config(alias_path=None, shortlist="chunks"), predict=_fake_predict("click_1")).rank_elements("switch to the next tab", els)
     assert ranked[0].kind == "TabItem"
 
 
@@ -121,12 +122,12 @@ def test_ask_returns_probability():
         assert "visible" in state
         return {"answers": {"q": {"noul": 0.83}}}
 
-    policy = LayaPolicy(Config(alias_path=None), predict=predict)
+    policy = LayaPolicy(Config(alias_path=None, shortlist="chunks"), predict=predict)
     assert policy.ask("is a dialog open?", _snap(["OK"])) == 0.83
 
 
 def test_null_text_generator_defers_to_human():
-    gen = make_text_generator(Config(alias_path=None))
+    gen = make_text_generator(Config(alias_path=None, shortlist="chunks"))
     assert isinstance(gen, NullTextGenerator)
     with pytest.raises(TextNeedsHuman):
         gen.generate("type the url", {})

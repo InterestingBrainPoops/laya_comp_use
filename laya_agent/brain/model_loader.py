@@ -65,11 +65,11 @@ def load_predict(cfg: Config, log: Callable[[str], None] = lambda s: None) -> Pr
         # 10-option fine pass plus two noul questions); a 1-option warmup left the first
         # real call at 500ms of kernel setup.
         state = {"goal": "warmup", "window": "warmup", "previous_actions": []}
-        for n in (cfg.coarse_chunk, 10):
-            agent.predict(state, {
-                "action": {"type": "choice", "instructions": "warmup", "criteria": {f"click_{i}": f"button 'warmup {i}'" for i in range(n)}},
-                "done": {"type": "noul", "instructions": "warmup"},
-                "need_text": {"type": "noul", "instructions": "warmup"},
-            })
+        for n, extras in ((cfg.coarse_chunk, False), (10, True)):
+            qs = {"action": {"type": "choice", "instructions": "warmup", "criteria": {f"click_{i}": f"button 'warmup {i}'" for i in range(n)}}}
+            if extras:
+                qs["done"] = {"type": "noul", "instructions": "warmup"}
+                qs["need_text"] = {"type": "noul", "instructions": "warmup"}
+            agent.predict(state, qs)
         log(f"model ready on {agent.device} in {time.perf_counter() - t0:.1f}s")
         return agent.predict

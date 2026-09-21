@@ -1,13 +1,16 @@
 """Decision layer: Snapshot + goal -> Decision.
 
-Two deciders, in order:
-  1. lexical (brain/lexical.py): the goal names an element explicitly ("the NandhaKishorM tab").
-     Deterministic, explainable, learns aliases from the user's picks.
-  2. Laya: the vague cases. Coarse-to-fine so 11+ options stay calibrated:
-       pass A  every element in chunks of `coarse_chunk`, keep `coarse_keep` per chunk
-       pass B  one more cut if the merged shortlist exceeds FINE_K
-       pass C  FINE_K elements + 2 meta actions = 10 options, Laya's calibrated bucket
-     Laya's 11+ option temperature is 0.1 (near-argmax) so the gate only trusts pass C.
+Pipeline (measured in tests/eval/run.py; numbers in docs/ARCHITECTURE.md):
+  1. lexical (brain/lexical.py): the goal names an element explicitly and unambiguously
+     ("the NandhaKishorM tab"). Deterministic, learns aliases from the user's picks.
+  2. shortlist: cut every element on screen to FINE_K candidates (see `shortlist`).
+  3. Laya fine pass: FINE_K elements as the only options of one `choice` question, in the
+     6-10 option bucket where Laya's probabilities are calibrated. "Is the goal done?" and
+     "does the next step need typing?" are separate `noul` questions in the same forward
+     pass, never options in the list: as options they stole up to half the probability mass
+     (narrow semantic top-1 36% with them, 91% without).
+  4. gate (agent/loop.py): low margin -> ask the human; the offered list carries a
+     "scroll down" option so scrolling is a human choice, not a competing action.
 
 Laya packs `[CLS] instructions [SEP] options... [SEP] state [SEP]` into 512 tokens, so each
 option label carries the element description and the state stays small.
@@ -20,44 +23,64 @@ from typing import Any, Callable
 
 from laya_agent.brain.aliases import AliasStore
 from laya_agent.brain.lexical import kinds_in_goal, lexical_scores, tokens
+from laya_agent.brain.retriever import Retriever, make_retriever
 from laya_agent.config import Config
-from laya_agent.models import ACTION_DONE, ACTION_NEED_TEXT, ACTION_SCROLL_DOWN, META_ACTIONS, Decision, Snapshot, UIElement
+from laya_agent.models import ACTION_NEED_TEXT, ACTION_SCROLL_DOWN, Decision, Snapshot, UIElement
 
 PredictFn = Callable[[Any, dict[str, Any]], dict[str, Any]]
 
-FINE_META = {ACTION_DONE: META_ACTIONS[ACTION_DONE], ACTION_SCROLL_DOWN: META_ACTIONS[ACTION_SCROLL_DOWN]}
+INSTRUCTIONS = (
+    "You control a Windows desktop with the mouse. Given the goal and the current screen, "
+    "which single action moves closest to completing the goal?"
+)
 
 
 class LayaPolicy:
-    FINE_K = 8  # 8 elements + 2 meta actions = 10 options
     LEXICAL_DECIDE = 0.9  # best lexical score at or above this decides without Laya
     LEXICAL_MARGIN = 0.25  # ... provided the runner-up is this far behind
 
-    def __init__(self, cfg: Config, predict: PredictFn | None = None, aliases: AliasStore | None = None) -> None:
-        """predict: injectable for tests. Default loads the Laya checkpoint lazily."""
+    @property
+    def FINE_K(self) -> int:  # options in the final pass: Laya's calibrated 6-10 bucket
+        return self.cfg.fine_k
+
+    def __init__(
+        self,
+        cfg: Config,
+        predict: PredictFn | None = None,
+        aliases: AliasStore | None = None,
+        retriever: Retriever | None | str = "auto",
+    ) -> None:
+        """predict / retriever: injectable for tests. Defaults load lazily per config."""
         self.cfg = cfg
         self._predict = predict
         self._load_lock = threading.Lock()
         self._passes, self._laya_ms = 0, 0.0
+        self._retrieved: list[int] = []
+        self._sims: dict[int, float] = {}
+        self._goal_tokens: list[str] = []
         self.load_ms: float | None = None
         self.aliases = aliases if aliases is not None else AliasStore(cfg.alias_path)
+        self.retriever: Retriever | None = make_retriever(cfg) if retriever == "auto" else retriever
 
     # -- public ---------------------------------------------------------------
     def decide(self, goal: str, snap: Snapshot, history: list[str]) -> Decision:
         t0 = time.perf_counter()
         self._passes, self._laya_ms = 0, 0.0
+        self._retrieved, self._sims = [], {}
         elements = self.rank_elements(goal, snap.elements)[: self.cfg.max_elements]
         state = self.build_state(goal, snap, history)
         lex = lexical_scores(goal, elements, self.aliases.as_dict())
-        # Ties: selected (current tab's own controls) first, then front-most / shallowest.
-        by_lex = sorted(elements, key=lambda e: (lex[e.id], e.selected, -e.id), reverse=True)
+        self._goal_tokens = tokens(goal)
+        by_lex = sorted(elements, key=lambda e: (lex[e.id], *self._tie_key(e)), reverse=True)
         explicit = self._explicit_match(by_lex, lex)
         lexical_ms = (time.perf_counter() - t0) * 1000
 
+        t1 = time.perf_counter()
         shortlist = self.shortlist(goal, state, elements, by_lex, lex)
+        shortlist_ms = (time.perf_counter() - t1) * 1000
         fine = sorted(shortlist, key=lambda e: e.id)
         raw = self.predict(state, self._questions(fine, goal))
-        ranked = self._ranked(raw)
+        ranked = self._fused(self._ranked(raw), fine)
         ans = raw["answers"]
         need_text = float(ans.get("need_text", {}).get("noul", 0.0))
         done_prob = float(ans["done"]["noul"])
@@ -69,17 +92,19 @@ class LayaPolicy:
             confidence = max(lex[explicit.id], 0.9)
             decided_by = "name match"
         else:
-            action = ranked[0][0]
+            action = ranked[0][0] if ranked else ACTION_SCROLL_DOWN
             top = ranked[:5]
-            confidence = self.margin_confidence(ranked, float(ans["action"]["confidence"]))
+            confidence = self.margin_confidence(ranked, float(ans["action"]["confidence"])) if ranked else 0.0
             decided_by = "laya"
         if need_text >= 0.8 and explicit is None:
             action, confidence, decided_by = ACTION_NEED_TEXT, need_text, "laya"
+        # Scrolling is offered to the human, never chosen over an element automatically.
+        top = top + [(ACTION_SCROLL_DOWN, 0.0)]
 
         raw = dict(raw)
         raw["_elements"] = {f"click_{e.id}": e for e in elements}
-        raw["_shortlist"] = [e.id for e in shortlist]
-        raw["_fine"] = [e.id for e in fine]
+        raw["_shortlist"] = self._retrieved or [e.id for e in shortlist]  # orange in the overlay
+        raw["_fine"] = [e.id for e in fine]  # green
         raw["_lexical"] = {e.id: lex[e.id] for e in by_lex[:5] if lex[e.id] > 0}
         raw["_decided_by"] = decided_by
         return Decision(
@@ -92,6 +117,7 @@ class LayaPolicy:
             raw=raw,
             timings={
                 "lexical_ms": round(lexical_ms, 1),
+                "shortlist_ms": round(shortlist_ms, 1),
                 "laya_passes": self._passes,
                 "laya_ms": round(self._laya_ms, 1),
                 "decide_ms": round((time.perf_counter() - t0) * 1000, 1),
@@ -107,6 +133,15 @@ class LayaPolicy:
         state = self.build_state(goal, snap, history or [], include_elements=True)
         raw = self.predict(state, {"q": {"type": "noul", "instructions": question}})
         return float(raw["answers"]["q"]["noul"])
+
+    @staticmethod
+    def _tie_key(e: UIElement) -> tuple[bool, bool, bool, int]:
+        """Same-name ties, most attractive first: the front window over background ones
+        (Terminal's 'New Tab' button over Chrome's tab named 'New Tab'); an already-selected
+        tab last, clicking it does nothing; a selected control otherwise first (the current
+        tab's own 'Close Tab'); then tree order (shallower, more prominent)."""
+        already_active = e.selected and e.kind in ("TabItem", "ListItem", "RadioButton")
+        return (e.foreground, not already_active, e.selected, -e.id)
 
     # -- deciders -----------------------------------------------------------------
     def _explicit_match(self, by_lex: list[UIElement], lex: dict[int, float]) -> UIElement | None:
@@ -125,28 +160,74 @@ class LayaPolicy:
         ]
         second = lex[rivals[0].id] if rivals else 0.0
         if best - second >= self.LEXICAL_MARGIN:
-            return by_lex[0]
+            return top
+        # "switch to spotify" ties the Spotify window with a Chrome tab titled 'Spotify - Web
+        # Player' (which sorts first when it is Chrome's current tab). Naming an app is a
+        # request for that app's window (measured live).
+        for e in by_lex:
+            if lex[e.id] < best:
+                break
+            if e.is_window and self._names_app(e):
+                return e
         return None
 
+    def _names_app(self, win: UIElement) -> bool:
+        goal_toks = set(self._goal_tokens)
+        return bool(goal_toks) and goal_toks <= set(tokens(win.window))
+
+    def _fused(self, ranked: list[tuple[str, float]], fine: list[UIElement]) -> list[tuple[str, float]]:
+        """Blend Laya's probabilities with retriever similarity: p' ∝ p^(1-w) · s^w, where s is
+        the similarity rescaled to [0.05, 1] over the fine set. w = 0 leaves Laya alone."""
+        w = self.cfg.fusion_weight
+        if w <= 0 or not self._sims or not ranked:
+            return ranked
+        sims = {f"click_{e.id}": self._sims.get(e.id, 0.0) for e in fine}
+        lo, hi = min(sims.values()), max(sims.values())
+        span = (hi - lo) or 1.0
+        fused = {a: (max(p, 1e-6) ** (1 - w)) * (0.05 + 0.95 * (sims.get(a, lo) - lo) / span) ** w for a, p in ranked}
+        z = sum(fused.values()) or 1.0
+        return sorted(((a, round(v / z, 4)) for a, v in fused.items()), key=lambda kv: kv[1], reverse=True)
+
+    # -- shortlisting -------------------------------------------------------------
     def shortlist(self, goal: str, state: dict, elements: list[UIElement], by_lex: list[UIElement], lex: dict[int, float]) -> list[UIElement]:
-        """Cut to FINE_K. Guaranteed: lexical hits and kind matches. Rest: Laya over chunks."""
+        """Cut to FINE_K. Guaranteed: lexical hits and kind matches. Rest, by config:
+        "retriever": embedding top-`retriever_top`, order-independent, then one Laya cut.
+        "chunks":    Laya over chunks of `coarse_chunk` keeping `coarse_keep` each, then a cut."""
         if len(elements) <= self.FINE_K:
             return list(elements)
-        kinds = self.kinds_in_goal(goal)
-        kept: dict[int, UIElement] = {}
-        for e in by_lex:
-            if lex[e.id] >= 0.5 and len(kept) < self.FINE_K // 2:
-                kept[e.id] = e
-        for e in elements:
-            if e.kind in kinds and len(kept) < self.FINE_K - 2:
-                kept.setdefault(e.id, e)
+        guaranteed = self._guaranteed(goal, elements, by_lex, lex)
+        kept: dict[int, UIElement] = {e.id: e for e in guaranteed}
         chunk = max(self.FINE_K, self.cfg.coarse_chunk)
+        if self.retriever is not None:
+            # Fill to FINE_K in similarity order. No Laya cut pass: that would be another
+            # 11+ option ranking, which is exactly what the retriever replaces.
+            ranked = self.retriever.rank(goal, elements)
+            self._sims = {e.id: s for e, s in ranked}
+            self._retrieved = [e.id for e, _ in ranked[: self.cfg.retriever_top]]
+            for e, _sim in ranked:
+                if len(kept) >= self.FINE_K:
+                    break
+                kept.setdefault(e.id, e)
+            return [e for e in elements if e.id in kept]
         for start in range(0, len(elements), chunk):
             part = elements[start : start + chunk]
             for e in self._top_clicks(state, goal, part, self.cfg.coarse_keep):
                 kept.setdefault(e.id, e)
+        return self._final_cut(state, goal, elements, kept, guaranteed, chunk)
+
+    def _guaranteed(self, goal, elements, by_lex, lex) -> list[UIElement]:
+        kinds = kinds_in_goal(goal)
+        out: list[UIElement] = []
+        for e in by_lex:
+            if lex[e.id] >= 0.5 and len(out) < self.FINE_K // 2:
+                out.append(e)
+        for e in elements:
+            if e.kind in kinds and e not in out and len(out) < self.FINE_K - 2:
+                out.append(e)
+        return out
+
+    def _final_cut(self, state, goal, elements, kept, guaranteed, chunk) -> list[UIElement]:
         merged = [e for e in elements if e.id in kept]
-        guaranteed = [e for e in merged if lex[e.id] >= 0.5 or e.kind in kinds][: self.FINE_K - 2]
         while len(merged) > self.FINE_K:
             rest = [e for e in merged if e not in guaranteed]
             cut = self._top_clicks(state, goal, rest[:chunk], self.FINE_K - len(guaranteed))
@@ -154,14 +235,15 @@ class LayaPolicy:
         return merged
 
     def _top_clicks(self, state: dict, goal: str, elements: list[UIElement], k: int) -> list[UIElement]:
-        raw = self.predict(state, self._questions(elements, goal))
+        if not elements or k <= 0:
+            return []
+        raw = self.predict(state, self._questions(elements, goal, extras=False))
         by_id = {e.id: e for e in elements}
         out = []
         for action, _ in self._ranked(raw):
-            if action.startswith("click_"):
-                out.append(by_id[int(action.split("_", 1)[1])])
-                if len(out) == k:
-                    break
+            out.append(by_id[int(action.split("_", 1)[1])])
+            if len(out) == k:
+                break
         return out
 
     # -- building blocks ------------------------------------------------------
@@ -169,7 +251,7 @@ class LayaPolicy:
         """Stable order: kind and word matches first, then screen order. Only affects which
         elements survive `max_elements` and how chunks are formed."""
         g = set(tokens(goal))
-        kinds = self.kinds_in_goal(goal)
+        kinds = kinds_in_goal(goal)
 
         def score(e: UIElement) -> float:
             overlap = len(g & set(tokens(e.name)))
@@ -190,25 +272,19 @@ class LayaPolicy:
         return state
 
     @staticmethod
-    def _questions(elements: list[UIElement], goal: str) -> dict[str, Any]:
-        criteria = {f"click_{e.id}": e.label() for e in elements}
-        criteria.update(FINE_META)
-        return {
+    def _questions(elements: list[UIElement], goal: str, extras: bool = True) -> dict[str, Any]:
+        """Elements are the only options. done / need_text are separate yes-no questions."""
+        qs: dict[str, Any] = {
             "action": {
                 "type": "choice",
-                "instructions": f'The user asked: "{goal}". Which screen element is the user asking to '
-                "click next? Choose 'done' only if the request is already satisfied.",
-                "criteria": criteria,
-            },
-            "done": {
-                "type": "noul",
-                "instructions": f'Is the request "{goal}" already fully satisfied on the current screen?',
-            },
-            "need_text": {
-                "type": "noul",
-                "instructions": f'Does the next step for "{goal}" require typing text rather than clicking?',
-            },
+                "instructions": INSTRUCTIONS,
+                "criteria": {f"click_{e.id}": e.label() for e in elements},
+            }
         }
+        if extras:
+            qs["done"] = {"type": "noul", "instructions": f'Is the request "{goal}" already fully satisfied on the current screen?'}
+            qs["need_text"] = {"type": "noul", "instructions": f'Does the next step for "{goal}" require typing text rather than clicking?'}
+        return qs
 
     @staticmethod
     def _ranked(raw: dict[str, Any]) -> list[tuple[str, float]]:
@@ -217,12 +293,14 @@ class LayaPolicy:
 
     @staticmethod
     def margin_confidence(ranked: list[tuple[str, float]], laya_conf: float) -> float:
-        """Entropy confidence collapses with many options; use the top-1 margin instead."""
+        """Confidence = the top option's probability. The final pass runs in Laya's calibrated
+        6-10 option bucket, so p(top) is the honest number. An earlier margin formula
+        ((top - second) * 2 + top / 2) turned p=0.55 into 0.97 and let a wrong click through
+        (measured: "make it louder" -> Play). Laya's entropy `confidence` is ignored: it
+        collapses as the option count grows."""
         if not ranked:
             return 0.0
-        top = ranked[0][1]
-        second = ranked[1][1] if len(ranked) > 1 else 0.0
-        return round(max(min(top, 1.0), min(1.0, (top - second) * 2 + top * 0.5), laya_conf), 4)
+        return round(min(ranked[0][1], 1.0), 4)
 
     @staticmethod
     def _element_for(action: str, candidates: list[UIElement]) -> UIElement | None:
@@ -257,6 +335,8 @@ class LayaPolicy:
                 t = time.perf_counter()
                 self._predict = load_predict(self.cfg, log)
                 self.load_ms = round((time.perf_counter() - t) * 1000, 1)
+            if self.retriever is not None and hasattr(self.retriever, "preload"):
+                self.retriever.preload(log)
 
     @property
     def ready(self) -> bool:
