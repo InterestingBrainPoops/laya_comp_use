@@ -6,3 +6,4 @@ tests/out/
 .hf_cache/
 *.egg-info/
 .laya_aliases.json
+logs/

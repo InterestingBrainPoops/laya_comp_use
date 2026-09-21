@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QPushButton,
     QSplitter,
+    QTabWidget,
     QTableWidget,
     QTableWidgetItem,
     QTextBrowser,
@@ -26,6 +27,13 @@ from laya_agent.debug import annotate_png, element_listing
 from laya_agent.models import InputRequest, StepResult
 
 BOX_COLORS = ["#ff3b30", "#ff9500", "#ffcc00", "#34c759", "#5ac8fa"]
+# (header, timings key). Every layer reports into StepResult.timings; text_gen is the v2 slot.
+TIMING_COLUMNS = [
+    ("step", "step"), ("screenshot", "screenshot_ms"), ("uia", "uia_ms"), ("nodes", "uia_nodes"),
+    ("lexical", "lexical_ms"), ("laya passes", "laya_passes"), ("laya", "laya_ms"), ("decide", "decide_ms"),
+    ("human", "human_ms"), ("text gen", "text_gen_ms"), ("act", "act_ms"), ("total", "total_ms"), ("note", "note"),
+]
+SUMMED = ("parse_ms", "decide_ms", "human_ms", "act_ms")
 
 
 class QtEvents(QObject):
@@ -102,6 +110,7 @@ class MainWindow(QMainWindow):
         self.worker: Worker | None = None
         self.awaiting_input = False
         self.last_png: bytes | None = None
+        self._timing_rows: list[dict] = []
 
         self.setWindowTitle("Laya screen agent")
         self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
@@ -110,6 +119,7 @@ class MainWindow(QMainWindow):
         self._wire()
         self.loop.own_hwnd = int(self.winId())
         self._say("system", "Type a goal, e.g. <i>open the Edit menu</i>. Start with <b>?</b> to ask a yes/no question about the screen. Focus the target app before pressing Enter.")
+        self._say("system", f"session log: {self.loop.log.path or 'off'}")
         self._say("system", "loading model in the background...")
         self.preloader = Preloader(self.loop)
         self.preloader.log.connect(lambda m: self._say("system", m))
@@ -137,8 +147,8 @@ class MainWindow(QMainWindow):
         lv.addWidget(self.chat, 1)
         lv.addLayout(row)
 
-        right = QWidget()
-        rv = QVBoxLayout(right)
+        screen = QWidget()
+        rv = QVBoxLayout(screen)
         self.preview = QLabel("screenshot appears here")
         self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.preview.setMinimumSize(480, 300)
@@ -150,8 +160,22 @@ class MainWindow(QMainWindow):
         rv.addWidget(self.preview, 1)
         rv.addWidget(self.table)
 
+        timing = QWidget()
+        tv = QVBoxLayout(timing)
+        self.timing_table = QTableWidget(0, len(TIMING_COLUMNS))
+        self.timing_table.setHorizontalHeaderLabels([c[0] for c in TIMING_COLUMNS])
+        self.timing_table.horizontalHeader().setStretchLastSection(True)
+        self.timing_summary = QLabel("no steps yet")
+        self.timing_summary.setWordWrap(True)
+        tv.addWidget(self.timing_table, 1)
+        tv.addWidget(self.timing_summary)
+
+        self.tabs = QTabWidget()
+        self.tabs.addTab(screen, "Screen")
+        self.tabs.addTab(timing, "Timing")
+
         split.addWidget(left)
-        split.addWidget(right)
+        split.addWidget(self.tabs)
         split.setSizes([420, 680])
         self.setCentralWidget(split)
 
@@ -223,8 +247,30 @@ class MainWindow(QMainWindow):
     @Slot(object)
     def _on_step(self, result: StepResult) -> None:
         self._render(result)
+        self._add_timing_row(result)
         if result.executed:
             self._say("agent", f"→ {result.note}")
+
+    def _add_timing_row(self, result: StepResult) -> None:
+        tm = dict(result.timings)
+        tm["total_ms"] = round(sum(tm.get(k, 0.0) for k in SUMMED), 1)
+        tm["step"] = result.step
+        tm["note"] = result.note
+        row = self.timing_table.rowCount()
+        self.timing_table.insertRow(row)
+        for col, (_, key) in enumerate(TIMING_COLUMNS):
+            v = tm.get(key, "")
+            text = f"{v:.0f}" if isinstance(v, float) else str(v)
+            self.timing_table.setItem(row, col, QTableWidgetItem(text))
+        self._timing_rows.append(tm)
+        n = len(self._timing_rows)
+        avg = {k: sum(r.get(k, 0.0) for r in self._timing_rows) / n for k in ("parse_ms", "decide_ms", "laya_ms", "act_ms", "total_ms")}
+        load = f"{self.loop.policy.load_ms / 1000:.1f}s" if self.loop.policy.load_ms else "n/a"
+        self.timing_summary.setText(
+            f"model load {load} · {n} step(s) · avg parse {avg['parse_ms']:.0f}ms, decide {avg['decide_ms']:.0f}ms "
+            f"(laya {avg['laya_ms']:.0f}ms), act {avg['act_ms']:.0f}ms, total {avg['total_ms']:.0f}ms · "
+            f"log: {self.loop.log.path or 'off'}"
+        )
 
     @Slot(object)
     def _on_input_needed(self, req: InputRequest) -> None:

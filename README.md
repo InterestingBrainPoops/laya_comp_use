@@ -71,6 +71,13 @@ layer's internals.
   `**` final-pass ones.
 - Each step's log line says how many elements were parsed and shortlisted and whether the
   choice came from the name match or Laya.
+- Every session writes `logs/<stamp>.jsonl` (every parse, decision with the full
+  probability table, question asked, reply given, click point, timings) plus a readable
+  `logs/<stamp>.log` and per-step screenshots. Set `log_dir = None` in `config.py` to turn
+  it off.
+- The **Timing** tab shows per-step milliseconds for screenshot, UI Automation walk,
+  name matching, Laya (pass count and time), waiting on you, text generation (v2), and
+  the click, with averages and the model load time.
 
 ## v2 hooks
 

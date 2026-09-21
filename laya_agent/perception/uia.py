@@ -94,13 +94,19 @@ def _app_name(hwnd: int, title: str) -> str:
 class UIAScreenParser:
     def __init__(self, cfg: Config) -> None:
         self.cfg = cfg
+        self._nodes = 0
         auto.SetGlobalSearchTimeout(2.0)
 
     # -- public ---------------------------------------------------------------
     def parse(self, exclude_hwnd: int | None = None, window_title: str | None = None) -> Snapshot:
+        t0 = time.perf_counter()
         png, w, h = self._screenshot()
+        t1 = time.perf_counter()
+        timings: dict[str, float] = {"screenshot_ms": round((t1 - t0) * 1000, 1)}
+        self._nodes = 0
         with auto.UIAutomationInitializerInThread(debug=False):
             windows = self._windows(exclude_hwnd, window_title)
+            timings["uia_windows_ms"] = round((time.perf_counter() - t1) * 1000, 1)
             elements: list[UIElement] = []
             titles: list[str] = []
             deadline = time.monotonic() + self.cfg.uia_deadline_s
@@ -113,39 +119,65 @@ class UIAScreenParser:
                 if minimized or time.monotonic() > deadline:
                     continue
                 budget = self.cfg.uia_max_nodes if i == 0 else self.cfg.uia_background_budget
+                tw = time.perf_counter()
                 elements.extend(
                     self._walk(win, exclude_hwnd, title, len(elements), budget, deadline, hwnd, i == 0)
                 )
+                if i == 0:
+                    timings["uia_front_ms"] = round((time.perf_counter() - tw) * 1000, 1)
+        timings["uia_ms"] = round((time.perf_counter() - t1) * 1000, 1)
+        timings["uia_nodes"] = self._nodes
+        timings["parse_ms"] = round((time.perf_counter() - t0) * 1000, 1)
         return Snapshot(
             png=png, width=w, height=h, window_title=titles[0] if titles else "",
-            elements=elements, source="uia", windows=titles,
+            elements=elements, source="uia", windows=titles, timings=timings,
         )
 
     # -- windows ----------------------------------------------------------------
     def _windows(self, exclude_hwnd: int | None, window_title: str | None) -> list:
-        """Visible top-level windows in z-order (front first). `window_title` narrows to one."""
-        out = []
+        """Visible top-level windows in z-order (front first). `window_title` narrows to one.
+
+        Uses Win32 EnumWindows (microseconds) and only then wraps the survivors as UIA
+        controls. Walking the UIA desktop root's children instead cost ~4s per parse
+        (measured: uia_windows_ms 4049 vs a 30ms element walk)."""
+        import win32con
+        import win32gui
+
         needle = window_title.lower() if window_title else None
-        for win in auto.GetRootControl().GetChildren():
+        candidates: list[tuple[int, str]] = []
+
+        def visit(hwnd: int, _: object) -> bool:
+            if hwnd == exclude_hwnd or not win32gui.IsWindowVisible(hwnd):
+                return True
+            if win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE) & win32con.WS_EX_TOOLWINDOW:
+                return True
+            title = _clean_name(win32gui.GetWindowText(hwnd) or "")
+            if not title or title in SKIP_WINDOW_NAMES or win32gui.GetClassName(hwnd) in SKIP_WINDOW_CLASSES:
+                return True
+            if win32gui.GetWindow(hwnd, win32con.GW_OWNER):  # owned popups are not app windows
+                return True
+            candidates.append((hwnd, title))
+            return True
+
+        win32gui.EnumWindows(visit, None)  # z-order, front first
+        out = []
+        for hwnd, title in candidates:
+            if needle is not None:
+                # Title or app name: a Terminal's title follows its active tab, an app's name does not.
+                if needle not in title.lower() and needle not in _app_name(hwnd, title).lower():
+                    continue
+            if not win32gui.IsIconic(hwnd):
+                l, t, r, b = win32gui.GetWindowRect(hwnd)
+                if r - l <= 0 or b - t <= 0:
+                    continue
             try:
-                if win.NativeWindowHandle == exclude_hwnd:
-                    continue
-                name = _clean_name(win.Name or "")
-                if not name or name in SKIP_WINDOW_NAMES or win.ClassName in SKIP_WINDOW_CLASSES:
-                    continue
-                if needle is not None:
-                    # Title or app name: a Terminal's title follows its active tab, an app's name does not.
-                    if needle in name.lower() or needle in _app_name(win.NativeWindowHandle, name).lower():
-                        return [win]
-                    continue
-                if win.ControlTypeName not in ("WindowControl", "PaneControl"):
-                    continue
-                if not self._is_minimized(win) and win.BoundingRectangle.width() <= 0:
-                    continue
+                ctrl = auto.ControlFromHandle(hwnd)
             except Exception:
                 continue
-            out.append(win)
-            if len(out) >= self.cfg.max_windows:
+            if ctrl is None:
+                continue
+            out.append(ctrl)
+            if needle is not None or len(out) >= self.cfg.max_windows:
                 break
         return out
 
@@ -198,6 +230,7 @@ class UIAScreenParser:
             visited += 1
             if visited > budget or time.monotonic() > deadline:
                 break
+            self._nodes += 1
             if doc is not None:
                 if doc_budget[doc] <= 0:
                     continue

@@ -87,6 +87,7 @@ class Snapshot:
     elements: list[UIElement]
     source: str = "uia"  # which ScreenParser produced it
     windows: list[str] = field(default_factory=list)  # every window parsed, z-order, front first
+    timings: dict[str, float] = field(default_factory=dict)  # screenshot_ms, uia_ms, uia_nodes, ...
 
     def by_id(self, element_id: int) -> UIElement | None:
         return next((e for e in self.elements if e.id == element_id), None)
@@ -114,6 +115,7 @@ class Decision:
     top_k: list[tuple[str, float]]  # (human label, probability) best first
     top_actions: list[str] = field(default_factory=list)  # action ids aligned with top_k
     raw: dict[str, Any] = field(default_factory=dict)  # model output; "_elements" maps action -> UIElement
+    timings: dict[str, float] = field(default_factory=dict)  # lexical_ms, laya_ms, laya_passes, decide_ms
 
     @property
     def is_click(self) -> bool:
@@ -127,6 +129,7 @@ class StepResult:
     decision: Decision
     executed: bool
     note: str = ""
+    timings: dict[str, float] = field(default_factory=dict)  # merged: parse, decide, act, human, settle
 
 
 @dataclass

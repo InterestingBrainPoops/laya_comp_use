@@ -15,6 +15,7 @@ option label carries the element description and the state stays small.
 from __future__ import annotations
 
 import threading
+import time
 from typing import Any, Callable
 
 from laya_agent.brain.aliases import AliasStore
@@ -37,17 +38,22 @@ class LayaPolicy:
         self.cfg = cfg
         self._predict = predict
         self._load_lock = threading.Lock()
+        self._passes, self._laya_ms = 0, 0.0
+        self.load_ms: float | None = None
         self.aliases = aliases if aliases is not None else AliasStore(cfg.alias_path)
 
     # -- public ---------------------------------------------------------------
     def decide(self, goal: str, snap: Snapshot, history: list[str]) -> Decision:
+        t0 = time.perf_counter()
+        self._passes, self._laya_ms = 0, 0.0
         elements = self.rank_elements(goal, snap.elements)[: self.cfg.max_elements]
         state = self.build_state(goal, snap, history)
         lex = lexical_scores(goal, elements, self.aliases.as_dict())
         # Ties: selected (current tab's own controls) first, then front-most / shallowest.
         by_lex = sorted(elements, key=lambda e: (lex[e.id], e.selected, -e.id), reverse=True)
-
         explicit = self._explicit_match(by_lex, lex)
+        lexical_ms = (time.perf_counter() - t0) * 1000
+
         shortlist = self.shortlist(goal, state, elements, by_lex, lex)
         fine = sorted(shortlist, key=lambda e: e.id)
         raw = self.predict(state, self._questions(fine, goal))
@@ -84,6 +90,12 @@ class LayaPolicy:
             top_k=[(self.describe(label, elements), p) for label, p in top],
             top_actions=[label for label, _ in top],
             raw=raw,
+            timings={
+                "lexical_ms": round(lexical_ms, 1),
+                "laya_passes": self._passes,
+                "laya_ms": round(self._laya_ms, 1),
+                "decide_ms": round((time.perf_counter() - t0) * 1000, 1),
+            },
         )
 
     def remember(self, goal: str, element: UIElement) -> None:
@@ -229,7 +241,12 @@ class LayaPolicy:
     def predict(self, state: Any, questions: dict[str, Any]) -> dict[str, Any]:
         if self._predict is None:
             self.preload()
-        return self._predict(state, questions)
+        t = time.perf_counter()
+        try:
+            return self._predict(state, questions)
+        finally:
+            self._passes += 1
+            self._laya_ms += (time.perf_counter() - t) * 1000
 
     def preload(self, log: Callable[[str], None] = lambda s: None) -> None:
         """Load the model now (call from a background thread at startup). Idempotent."""
@@ -237,7 +254,9 @@ class LayaPolicy:
             if self._predict is None:
                 from laya_agent.brain.model_loader import load_predict
 
+                t = time.perf_counter()
                 self._predict = load_predict(self.cfg, log)
+                self.load_ms = round((time.perf_counter() - t) * 1000, 1)
 
     @property
     def ready(self) -> bool:

@@ -80,9 +80,18 @@ Decisions:
 - Our own window is excluded by handle and minimized during capture and click, restored
   with `SW_SHOWNOACTIVATE` so focus stays on the target app.
 
-Measured: Windows Terminal 17 elements in 200ms; Chrome with a large page ~100 elements
-in ~4s (the COM property calls dominate; bulk `FindAll` with a cache request is the known
-speedup, not done yet).
+Measured (2026-09-20, after the timing tab exposed it): the "~4s parse" blamed on Chrome
+page content was mostly window enumeration. Walking the UIA desktop root's children cost
+~4.0s per parse; the element walk itself was 30ms. Enumeration now uses Win32
+`EnumWindows` and wraps only the survivors with `ControlFromHandle`.
+
+| parse | before | after |
+|---|---|---|
+| Terminal only (`--window Terminal`, 42 nodes) | 4200ms | 190ms |
+| all 12 visible windows (596 nodes) | ~4400ms | 580-680ms, of which screenshot 110-150ms |
+
+Remaining cost is ~0.8ms per UIA node; bulk `FindAll` with a cache request is the next
+step if it matters.
 
 ## 5. Decision (`brain/`)
 
@@ -162,6 +171,7 @@ bf16, fits beside Laya on 6GB) by config only.
 | hub re-check of a cached model | 22s | 0.2s | `snapshot_download(local_files_only=True)`, hand Laya a path; network only on first run |
 | random init of ModernBERT-large before weights load | 7-13s | ~3s | `skip_random_init()` makes `torch.nn.init.*` no-ops during `laya.load`; outputs bit-identical |
 | first CUDA pass | 0.9s | 0.3s | warmup predict inside the loader |
+| first real decision after warmup | 513ms | 170ms | warm up with the real shapes: a 20-option chunk pass and a 10-option fine pass, each with two noul questions |
 
 Unavoidable: ~1s torch import, ~1-2s CUDA init, ~2s moving weights to the GPU. The UI
 starts a `Preloader` thread on open, so the first goal does not pay the load.
@@ -175,6 +185,19 @@ Reproduce with `uv run python -m laya_agent.cli "x" --dry-run --max-steps 1`, wh
   chosen.
 - Step log line: window, element count, shortlist count, decider ("name match" or "laya"),
   top probability, confidence, P(done).
+- **Session log** (`session_log.py`, `config.log_dir`, default `logs/`). Per session:
+  `<stamp>.jsonl` with one event per line (`goal`, `parsed` with every element label,
+  `decided` with lexical scores, shortlist, fine pass, the full Laya probability table and
+  the decider, `human` with the options shown and the reply, `acted` with the click point,
+  `step` with merged timings, `finished`, `error`), a readable `<stamp>.log` mirror, and
+  with `log_screenshots` a folder of `step_N.png` and `step_N_annotated.png`. The loop is
+  the only writer; layers never log.
+- **Timing tab** in the UI, and a timing line per step in the CLI. Every layer reports
+  into `timings` on its own dataclass (`Snapshot.timings`: screenshot, UIA walk, node
+  count; `Decision.timings`: lexical, Laya pass count and ms; loop adds human wait, text
+  generation, act, settle) and the loop merges them into `StepResult.timings`. The tab
+  shows one row per step plus averages and the model load time. Text generation is the
+  v2 column and stays empty until `HFTextGenerator` exists.
 
 ## 9. Tooling and process
 
@@ -201,10 +224,13 @@ Reproduce with `uv run python -m laya_agent.cli "x" --dry-run --max-steps 1`, wh
 | 2026-09-20 | App name from the process executable | Spotify's and browsers' titles do not contain the app name |
 | 2026-09-20 | Click targeting: main child + obstacle clearance | New Tab split button's centre hit the divider; tab centres can graze close buttons |
 | 2026-09-20 | Selection inherited by a tab's children; selected wins same-name ties | "close the current tab" must never close another tab |
+| 2026-09-20 | Timings live on the dataclasses; loop merges; JSONL session log written only by the loop | one source of numbers for the UI tab, CLI, and log; layers stay side-effect free |
+| 2026-09-20 | Win32 `EnumWindows` for window enumeration | the timing tab showed 4.0s of every parse was the UIA desktop-root walk |
+| 2026-09-20 | Warm up with real question shapes | first decision paid 500ms of kernel setup |
 
 ## 11. Not done yet
 
 - OmniParser vision parser for canvas-only UIs (`perception/omniparser.py` stub).
 - `HFTextGenerator` for freeform text (`brain/text_gen.py` stub).
-- Faster UIA parse via bulk `FindAll` with cached properties.
+- Faster UIA walk via bulk `FindAll` with cached properties (only if ~0.8ms/node matters).
 - Multi-monitor (`monitor_index` exists, untested beyond the primary).

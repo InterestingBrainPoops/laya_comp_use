@@ -38,4 +38,8 @@ class Config:
     history_len: int = 4
     dry_run: bool = False  # decide but never act
 
+    # Session logging
+    log_dir: str | None = "logs"  # None disables; JSONL + .log per session
+    log_screenshots: bool = True  # save step_N.png and step_N_annotated.png per step
+
     extra: dict = field(default_factory=dict)

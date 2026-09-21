@@ -114,6 +114,18 @@ def test_repeat_same_action_asks():
     assert ex.done == ["click_1", "click_1"] and ev.asked[0].reason.startswith("repeating")
 
 
+def test_step_result_carries_merged_timings(tmp_path):
+    from laya_agent.session_log import SessionLog
+
+    loop, ex, ev = _loop([_dec("click_1", EL, 0.95), _dec(ACTION_DONE, None, 0.9, done=0.9)])
+    loop.log = SessionLog(tmp_path)
+    loop.run("open file")
+    tm = ev.steps[0].timings
+    assert {"parse_ms", "decide_ms", "act_ms"} <= set(tm) and "human_ms" not in tm
+    kinds = [l.split('"kind": "')[1].split('"')[0] for l in loop.log.path.read_text(encoding="utf-8").splitlines()]
+    assert kinds == ["session_start", "goal", "parsed", "decided", "acted", "step", "parsed", "decided", "step", "finished"]
+
+
 def test_max_steps_gives_up():
     loop, ex, ev = _loop([_dec("click_1", EL, 0.95)] * 5, max_steps=2)
     # repeats trigger a question at step 3, but max_steps=2 ends first

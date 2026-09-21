@@ -19,8 +19,12 @@ class ConsoleEvents:
         print(f"  {msg}")
 
     def on_step(self, result: StepResult) -> None:
+        tm = result.timings
         if result.executed:
             print(f"  -> {result.note}")
+        print(f"     timing: parse {tm.get('parse_ms', 0):.0f}ms (uia {tm.get('uia_ms', 0):.0f}ms, {tm.get('uia_nodes', 0):.0f} nodes) "
+              f"decide {tm.get('decide_ms', 0):.0f}ms (laya {tm.get('laya_passes', 0):.0f}x {tm.get('laya_ms', 0):.0f}ms) "
+              f"act {tm.get('act_ms', 0):.0f}ms")
 
     def on_input_needed(self, req: InputRequest) -> str:
         print(f"\n  ? {req.reason}")
@@ -49,6 +53,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.max_steps:
         cfg.max_steps = args.max_steps
     loop = build_loop(cfg, ConsoleEvents())
+    print(f"  session log: {loop.log.path or 'off'}")
     loop.policy.preload(lambda m: print(f"  {m}"))
 
     def run_once(text: str) -> None:
