@@ -61,6 +61,15 @@ def load_predict(cfg: Config, log: Callable[[str], None] = lambda s: None) -> Pr
         with skip_random_init():
             agent = laya.load(model_dir, device=cfg.device)
         agent.cfg["head_max_len"] = cfg.head_max_len
-        agent.predict({"goal": "warmup"}, {"q": {"type": "noul", "instructions": "warmup"}})
+        # Warm up with the shapes the policy really uses (a 20-option chunk pass and a
+        # 10-option fine pass plus two noul questions); a 1-option warmup left the first
+        # real call at 500ms of kernel setup.
+        state = {"goal": "warmup", "window": "warmup", "previous_actions": []}
+        for n in (cfg.coarse_chunk, 10):
+            agent.predict(state, {
+                "action": {"type": "choice", "instructions": "warmup", "criteria": {f"click_{i}": f"button 'warmup {i}'" for i in range(n)}},
+                "done": {"type": "noul", "instructions": "warmup"},
+                "need_text": {"type": "noul", "instructions": "warmup"},
+            })
         log(f"model ready on {agent.device} in {time.perf_counter() - t0:.1f}s")
         return agent.predict
