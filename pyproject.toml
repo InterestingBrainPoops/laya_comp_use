@@ -14,6 +14,7 @@ dependencies = [
     "pyside6>=6.11.2",
     "pywin32>=312",
     "safetensors>=0.8.0",
+    "sentence-transformers>=6.1.0",
     "torch>=2.11.0",
     "transformers>=5.17.0",
     "uiautomation>=2.0.29",
@@ -38,3 +39,4 @@ testpaths = ["tests"]
 dev = [
     "pytest>=9.1.1",
 ]
+eval = []
