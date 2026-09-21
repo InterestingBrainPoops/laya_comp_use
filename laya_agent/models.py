@@ -40,25 +40,39 @@ class UIElement:
     path: str = ""  # ancestor names, "Settings > Navigation"
     automation_id: str = ""
     selected: bool = False  # the active tab / checked item
+    hwnd: int = 0  # top-level window that owns this element
+    window: str = ""  # that window's title (short)
+    foreground: bool = True  # owner window was in front when parsed
+    minimized: bool = False  # only meaningful for kind == "Window"
 
     @property
     def center(self) -> tuple[int, int]:
         return self.rect.center
 
+    @property
+    def is_window(self) -> bool:
+        return self.kind == "Window"
+
     def label(self) -> str:
         """Compact text the decision model sees as an option, in plain words."""
         s = f"{KIND_WORDS.get(self.kind, self.kind.lower())} '{self.name}'"
+        if self.is_window and self.window and self.window.lower() not in self.name.lower():
+            s += f" of app {self.window}"  # Spotify's title is the playing song
         if self.selected:
             s += " (current)"
+        if self.minimized:
+            s += " (minimized)"
         if self.path:
             s += f" in {self.path}"
+        if not self.foreground and self.window and not self.is_window:
+            s += f" in window {self.window}"
         return s
 
 
 KIND_WORDS = {
     "TabItem": "tab", "Hyperlink": "link", "Edit": "text field", "MenuItem": "menu item",
     "ListItem": "list item", "TreeItem": "tree item", "ComboBox": "dropdown", "CheckBox": "checkbox",
-    "RadioButton": "radio button", "SplitButton": "button", "Button": "button",
+    "RadioButton": "radio button", "SplitButton": "button", "Button": "button", "Window": "window",
 }
 
 
@@ -69,9 +83,10 @@ class Snapshot:
     png: bytes
     width: int
     height: int
-    window_title: str
+    window_title: str  # foreground window
     elements: list[UIElement]
     source: str = "uia"  # which ScreenParser produced it
+    windows: list[str] = field(default_factory=list)  # every window parsed, z-order, front first
 
     def by_id(self, element_id: int) -> UIElement | None:
         return next((e for e in self.elements if e.id == element_id), None)

@@ -1,8 +1,16 @@
-"""Windows UI Automation parser: accessibility tree -> UIElement list + screenshot."""
+"""Windows UI Automation parser: accessibility trees of every visible window -> UIElement list.
+
+Windows are walked in z-order, front first. The foreground window gets the full node budget;
+background windows get `uia_background_budget` each, enough for their tabs, toolbars and
+menus but not their page content. Every window is also offered as a `Window` element so the
+agent can switch to it by name. Minimized windows appear only as `Window` elements.
+"""
 from __future__ import annotations
 
 import io
 import time
+from collections import deque
+from dataclasses import replace
 
 import mss
 import uiautomation as auto
@@ -25,6 +33,9 @@ PATH_TYPES = {
     "WindowControl", "PaneControl", "GroupControl", "TabControl", "MenuControl", "MenuBarControl",
     "ListControl", "TreeControl", "ToolBarControl", "DialogControl", "DocumentControl",
 }
+# Top-level windows that are never targets.
+SKIP_WINDOW_CLASSES = {"Shell_TrayWnd", "Shell_SecondaryTrayWnd", "Progman", "WorkerW", "Windows.UI.Core.CoreWindow"}
+SKIP_WINDOW_NAMES = {"Program Manager", "Windows Input Experience", "Microsoft Text Input Application"}
 
 
 def _kind(control_type_name: str) -> str:
@@ -42,6 +53,44 @@ def _is_readable(name: str) -> bool:
     return bool(name) and (" " in name or len(name) <= 14)
 
 
+APP_NAMES = {
+    "chrome": "Chrome", "msedge": "Edge", "firefox": "Firefox", "windowsterminal": "Terminal",
+    "explorer": "File Explorer", "code": "VS Code", "spotify": "Spotify", "discord": "Discord",
+    "notepad": "Notepad", "powershell": "PowerShell", "pwsh": "PowerShell", "python": "Python",
+    "steamwebhelper": "Steam", "obsidian": "Obsidian", "zed": "Zed", "slack": "Slack", "teams": "Teams",
+}
+_app_cache: dict[int, str] = {}
+
+
+def _app_name(hwnd: int, title: str) -> str:
+    """Owning process's executable, prettified ('chrome.exe' -> 'Chrome'). Titles lie: a
+    browser's title is the page title. Falls back to the title's last ' - ' segment."""
+    if hwnd in _app_cache:
+        return _app_cache[hwnd]
+    name = ""
+    try:
+        import os
+
+        import win32api
+        import win32con
+        import win32process
+
+        _, pid = win32process.GetWindowThreadProcessId(hwnd)
+        h = win32api.OpenProcess(win32con.PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        try:
+            exe = os.path.splitext(os.path.basename(win32process.GetModuleFileNameEx(h, 0)))[0]
+        finally:
+            win32api.CloseHandle(h)
+        if exe.lower() != "applicationframehost":  # UWP host: the title is the app
+            name = APP_NAMES.get(exe.lower(), exe)
+    except Exception:
+        pass
+    if not name:
+        name = title.rsplit(" - ", 1)[-1].strip()[:30] if " - " in title else title[:30]
+    _app_cache[hwnd] = name
+    return name
+
+
 class UIAScreenParser:
     def __init__(self, cfg: Config) -> None:
         self.cfg = cfg
@@ -51,18 +100,77 @@ class UIAScreenParser:
     def parse(self, exclude_hwnd: int | None = None, window_title: str | None = None) -> Snapshot:
         png, w, h = self._screenshot()
         with auto.UIAutomationInitializerInThread(debug=False):
-            root = self._find_window(window_title, exclude_hwnd) if window_title else self._target_window(exclude_hwnd)
-            title = _clean_name(root.Name) if root is not None else ""
-            elements = self._walk(root, exclude_hwnd, title) if root is not None else []
-        return Snapshot(png=png, width=w, height=h, window_title=title, elements=elements, source="uia")
+            windows = self._windows(exclude_hwnd, window_title)
+            elements: list[UIElement] = []
+            titles: list[str] = []
+            deadline = time.monotonic() + self.cfg.uia_deadline_s
+            for i, win in enumerate(windows):
+                title = _clean_name(win.Name)
+                hwnd = win.NativeWindowHandle
+                minimized = self._is_minimized(win)
+                titles.append(title)
+                elements.append(self._window_element(win, title, hwnd, len(elements), i == 0, minimized))
+                if minimized or time.monotonic() > deadline:
+                    continue
+                budget = self.cfg.uia_max_nodes if i == 0 else self.cfg.uia_background_budget
+                elements.extend(
+                    self._walk(win, exclude_hwnd, title, len(elements), budget, deadline, hwnd, i == 0)
+                )
+        return Snapshot(
+            png=png, width=w, height=h, window_title=titles[0] if titles else "",
+            elements=elements, source="uia", windows=titles,
+        )
+
+    # -- windows ----------------------------------------------------------------
+    def _windows(self, exclude_hwnd: int | None, window_title: str | None) -> list:
+        """Visible top-level windows in z-order (front first). `window_title` narrows to one."""
+        out = []
+        needle = window_title.lower() if window_title else None
+        for win in auto.GetRootControl().GetChildren():
+            try:
+                if win.NativeWindowHandle == exclude_hwnd:
+                    continue
+                name = _clean_name(win.Name or "")
+                if not name or name in SKIP_WINDOW_NAMES or win.ClassName in SKIP_WINDOW_CLASSES:
+                    continue
+                if needle is not None:
+                    # Title or app name: a Terminal's title follows its active tab, an app's name does not.
+                    if needle in name.lower() or needle in _app_name(win.NativeWindowHandle, name).lower():
+                        return [win]
+                    continue
+                if win.ControlTypeName not in ("WindowControl", "PaneControl"):
+                    continue
+                if not self._is_minimized(win) and win.BoundingRectangle.width() <= 0:
+                    continue
+            except Exception:
+                continue
+            out.append(win)
+            if len(out) >= self.cfg.max_windows:
+                break
+        return out
 
     @staticmethod
-    def _find_window(title_substr: str, exclude_hwnd: int | None):
-        needle = title_substr.lower()
-        for win in auto.GetRootControl().GetChildren():
-            if win.NativeWindowHandle != exclude_hwnd and needle in (win.Name or "").lower():
-                return win
-        return None
+    def _is_minimized(win) -> bool:
+        try:
+            import win32gui
+
+            return bool(win32gui.IsIconic(win.NativeWindowHandle))
+        except Exception:
+            return False
+
+    @staticmethod
+    def _window_element(win, title: str, hwnd: int, idx: int, foreground: bool, minimized: bool) -> UIElement:
+        try:
+            r = win.BoundingRectangle
+            rect = Rect(r.left, r.top, r.right, min(r.bottom, r.top + 36))  # title bar strip
+        except Exception:
+            rect = Rect(0, 0, 0, 0)
+        if minimized:
+            rect = Rect(0, 0, 0, 0)
+        return UIElement(
+            id=idx + 1, kind="Window", name=title, rect=rect, hwnd=hwnd, window=_app_name(hwnd, title),
+            foreground=foreground, minimized=minimized, selected=foreground,
+        )
 
     # -- internals ------------------------------------------------------------
     def _screenshot(self) -> tuple[bytes, int, int]:
@@ -74,35 +182,21 @@ class UIAScreenParser:
         img.save(buf, format="PNG", optimize=False)
         return buf.getvalue(), img.width, img.height
 
-    def _target_window(self, exclude_hwnd: int | None):
-        """Foreground window, unless it is ours; then the first visible top-level window."""
-        fg = auto.GetForegroundControl()
-        top = fg.GetTopLevelControl() if fg is not None else None
-        if top is not None and top.NativeWindowHandle != exclude_hwnd:
-            return top
-        for win in auto.GetRootControl().GetChildren():
-            if win.NativeWindowHandle == exclude_hwnd or win.IsOffscreen:
-                continue
-            if win.ControlTypeName == "WindowControl" and win.BoundingRectangle.width() > 0:
-                return win
-        return None
-
-    def _walk(self, root, exclude_hwnd: int | None, window_title: str = "") -> list[UIElement]:
+    def _walk(self, root, exclude_hwnd, window_title, start_idx, budget, deadline, hwnd, foreground) -> list[UIElement]:
         """Breadth-first so shallow chrome (tabs, toolbars, menus) is found before deep page
         content. Each Document subtree (a web page) gets its own node budget so one huge
         page cannot starve the rest of the window."""
-        from collections import deque
-
-        deadline = time.monotonic() + self.cfg.uia_deadline_s
         elements: list[UIElement] = []
         seen: set[tuple[str, str, int, int]] = set()
         visited = 0
-        doc_budget: dict[int, int] = {}  # id(document control) -> nodes left
-        queue: deque[tuple[object, int, list[str], int | None]] = deque([(root, 0, [], None)])
+        doc_budget: dict[int, int] = {}
+        short = _app_name(hwnd, window_title)
+        # queue items: control, depth, path, document id, inside-a-selected-item flag
+        queue: deque[tuple[object, int, list[str], int | None, bool]] = deque([(root, 0, [], None, False)])
         while queue:
-            ctrl, depth, path, doc = queue.popleft()
+            ctrl, depth, path, doc, in_selected = queue.popleft()
             visited += 1
-            if visited > self.cfg.uia_max_nodes or time.monotonic() > deadline:
+            if visited > budget or time.monotonic() > deadline:
                 break
             if doc is not None:
                 if doc_budget[doc] <= 0:
@@ -118,9 +212,12 @@ class UIAScreenParser:
             except Exception:
                 continue
             r = Rect(rect.left, rect.top, rect.right, rect.bottom)
-            if not offscreen and r.area > 0:
-                el = self._maybe_element(ctrl, ct, name, r, path, len(elements))
+            selected = self._is_selected(ctrl) if ct in SELECTABLE_TYPES else False
+            if not offscreen and r.area > 0 and depth > 0:
+                el = self._maybe_element(ctrl, ct, name, r, path, start_idx + len(elements), hwnd, short, foreground)
                 if el is not None:
+                    if in_selected and not el.selected:
+                        el = replace(el, selected=True)  # the close button of the current tab
                     key = (el.kind, el.name, *el.center)
                     if key not in seen:
                         seen.add(key)
@@ -139,10 +236,10 @@ class UIAScreenParser:
             except Exception:
                 children = []
             for child in children:
-                queue.append((child, depth + 1, child_path, doc))
+                queue.append((child, depth + 1, child_path, doc, in_selected or (selected and ct == "TabItemControl")))
         return elements
 
-    def _maybe_element(self, ctrl, ct: str, name: str, r: Rect, path: list[str], idx: int) -> UIElement | None:
+    def _maybe_element(self, ctrl, ct, name, r, path, idx, hwnd, window, foreground) -> UIElement | None:
         aid = ""
         try:
             aid = ctrl.AutomationId or ""
@@ -166,6 +263,9 @@ class UIAScreenParser:
             path=" > ".join(p for p in path[-2:] if p),
             automation_id=aid,
             selected=self._is_selected(ctrl) if ct in SELECTABLE_TYPES else False,
+            hwnd=hwnd,
+            window=window,
+            foreground=foreground,
         )
 
     @staticmethod

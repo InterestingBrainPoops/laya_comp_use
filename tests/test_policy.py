@@ -92,6 +92,17 @@ def test_kind_named_in_goal_survives_to_fine_pass():
     assert {31, 32} <= set(d.raw["_fine"])
 
 
+def test_same_name_tie_prefers_selected_element():
+    """'close this tab' with two 'Close Tab' buttons must hit the current tab's, not the first."""
+    els = [
+        UIElement(id=1, kind="Button", name="Close Tab", rect=Rect(0, 0, 1, 1)),
+        UIElement(id=2, kind="Button", name="Close Tab", rect=Rect(5, 0, 6, 1), selected=True),
+    ]
+    snap = Snapshot(png=b"", width=1, height=1, window_title="Terminal", elements=els)
+    d = LayaPolicy(Config(alias_path=None), predict=_fake_predict("click_1")).decide("close this tab", snap, history=[])
+    assert d.element.id == 2 and d.raw["_decided_by"] == "name match"
+
+
 def test_rank_boosts_kind_named_in_goal():
     els = _els(["Zzz", "Yyy"], kind="Button") + [UIElement(id=3, kind="TabItem", name="Xxx", rect=Rect(0, 0, 5, 5))]
     ranked = LayaPolicy(Config(alias_path=None), predict=_fake_predict("click_1")).rank_elements("switch to the next tab", els)

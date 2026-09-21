@@ -15,7 +15,10 @@ _WORD = re.compile(r"[a-z0-9]+")
 STOP = {
     "the", "a", "an", "to", "on", "in", "of", "and", "click", "open", "go", "then", "press", "select",
     "switch", "my", "me", "it", "that", "this", "tab", "tabs", "button", "link", "menu", "window",
-    "please", "now", "into", "onto", "with", "for", "at", "over", "back", "up", "down",
+    "please", "now", "into", "onto", "with", "for", "at", "over", "back", "up", "down", "app",
+    "navigate", "show", "find", "focus", "bring", "activate", "launch", "start", "use", "get",
+    "make", "set", "put", "move", "see", "look", "check", "hit", "tap", "choose", "pick",
+    "want", "need", "i", "you", "we", "can", "could", "would", "is", "are", "be", "do",
 }
 
 
@@ -37,31 +40,68 @@ def token_similarity(a: str, b: str) -> float:
     return 0.0
 
 
+SELECTED_WORDS = {"current", "active", "selected", "focused"}  # extra names for selected elements
+PARTIAL_CAP = 0.7  # any goal word unmatched: strong shortlist candidate, never an explicit decision
+WINDOW_ONLY = 0.4  # element whose only matches are its owning window's name ("spotify" -> Play button)
+WINDOW_BY_TITLE = 0.7  # a Window matched through its title, not its app name ("new tab" -> Chrome window)
+
+
 def score_element(goal_tokens: list[str], e: UIElement, extra_names: list[str] = ()) -> float:
-    """Fraction of goal tokens that find a match in the element's name (or alias names),
-    weighted so a single strong distinctive match still scores high."""
+    """[0, 1]. Explicit (>= 0.9) only when every goal word matches.
+
+    - Elements: match the name (plus aliases). Words matching only the owning window's app
+      name also count, but an element matched *only* that way is scaled by WINDOW_ONLY, so
+      "play in spotify" -> Play button, "spotify" -> Spotify window.
+    - Windows: match the app name and the title. A window matched only through its title is
+      scaled by WINDOW_BY_TITLE, so "open a new tab in chrome" -> the New Tab button, not the
+      window titled 'New Tab - Google Chrome'; "switch to chrome" -> the window.
+    """
     if not goal_tokens:
         return 0.0
-    names = [e.name, *extra_names]
-    name_toks = {t for n in names for t in tokens(n, keep_stop=True)}
-    if not name_toks:
+    app_toks = set(tokens(e.window, keep_stop=True)) if e.window else set()
+    if e.is_window:
+        name_toks = app_toks
+        alt_toks = {t for n in [e.name, *extra_names] for t in tokens(n, keep_stop=True)} - app_toks
+        alt_scale = WINDOW_BY_TITLE
+    else:
+        name_toks = {t for n in [e.name, *extra_names] for t in tokens(n, keep_stop=True)}
+        if e.selected:
+            name_toks |= SELECTED_WORDS  # "close the current tab" -> the active tab's close button
+        alt_toks = app_toks - name_toks
+        alt_scale = WINDOW_ONLY
+    if not name_toks and not alt_toks:
         return 0.0
-    best = []
+    best: list[float] = []
+    via_alt: list[bool] = []
     for g in goal_tokens:
-        best.append(max((token_similarity(g, n) for n in name_toks), default=0.0))
+        s = max((token_similarity(g, n) for n in name_toks), default=0.0)
+        alt = s == 0.0 and bool(alt_toks)
+        if alt:
+            s = max(token_similarity(g, n) for n in alt_toks)
+        best.append(s)
+        via_alt.append(alt and s > 0)
     matched = [b for b in best if b > 0]
     if not matched:
         return 0.0
     coverage = len(matched) / len(goal_tokens)
     strength = max(best)
-    # a long distinctive token (>= 6 chars) matching exactly is decisive on its own
     distinctive = any(b >= 0.85 and len(g) >= 6 for g, b in zip(goal_tokens, best))
-    return round(min(1.0, 0.5 * strength + 0.5 * coverage + (0.3 if distinctive else 0.0)), 3)
+    score = 0.4 * strength + 0.6 * coverage + (0.2 if distinctive else 0.0)
+    if coverage < 1.0:
+        score = min(score, PARTIAL_CAP)
+    if all(a for a, b in zip(via_alt, best) if b > 0):
+        score *= alt_scale
+    elif e.is_window and any(via_alt):
+        # "open a new tab in chrome": the Chrome window titled 'New Tab - ...' matches 'new'
+        # only through its title. Title words never make a window an explicit choice.
+        score = min(score, PARTIAL_CAP)
+    return round(min(1.0, score), 3)
 
 
 KIND_WORDS_IN_GOAL = {
     "tab": "TabItem", "tabs": "TabItem", "link": "Hyperlink", "button": "Button", "menu": "MenuItem",
     "field": "Edit", "box": "Edit", "input": "Edit", "checkbox": "CheckBox", "dropdown": "ComboBox",
+    "window": "Window", "app": "Window",
 }
 KIND_MISMATCH = 0.6  # "the github tab" must not lock onto a button named 'Install GitHub'
 

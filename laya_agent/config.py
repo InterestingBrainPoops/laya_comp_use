@@ -22,9 +22,11 @@ class Config:
     target_window: str | None = None  # title substring; None = foreground window
     monitor_index: int = 1  # mss monitor index (1 = primary)
     uia_max_depth: int = 16
-    uia_max_nodes: int = 3000
-    uia_document_budget: int = 600  # nodes per web page (Document control) before moving on
-    uia_deadline_s: float = 4.0
+    uia_max_nodes: int = 1500
+    uia_document_budget: int = 500  # nodes per web page (Document control) before moving on
+    uia_deadline_s: float = 4.0  # total across all windows
+    max_windows: int = 12  # top-level windows parsed per step, z-order front first
+    uia_background_budget: int = 250  # nodes per background window (tabs/toolbars, not page content)
 
     # Text generation (v2)
     text_generator: str = "null"  # "null" | "hf"

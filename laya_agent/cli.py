@@ -42,9 +42,10 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--delay", type=float, default=3.0, help="seconds to focus the target window")
     ap.add_argument("--dry-run", action="store_true", help="decide but never click")
     ap.add_argument("--max-steps", type=int, default=None)
+    ap.add_argument("--window", metavar="TITLE_SUBSTR", default=None, help="act only in the window whose title contains this")
     args = ap.parse_args(argv)
 
-    cfg = Config(dry_run=args.dry_run)
+    cfg = Config(dry_run=args.dry_run, target_window=args.window)
     if args.max_steps:
         cfg.max_steps = args.max_steps
     loop = build_loop(cfg, ConsoleEvents())

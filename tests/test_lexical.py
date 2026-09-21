@@ -47,6 +47,13 @@ def test_alias_makes_vague_goal_explicit(tmp_path):
     assert reloaded.as_dict() == {"NandhaKishorM/laya": ["github"]}
 
 
+def test_selected_elements_answer_to_current():
+    first = UIElement(id=1, kind="Button", name="Close Tab", rect=Rect(0, 0, 1, 1))
+    current = UIElement(id=2, kind="Button", name="Close Tab", rect=Rect(5, 0, 6, 1), selected=True)
+    s = lexical_scores("close the current tab", [first, current])
+    assert s[2] >= 0.9 and s[2] - s[1] >= 0.25
+
+
 def test_score_element_distinctive_token():
     assert score_element(["nandhakishorm"], _el(1, "NandhaKishorM/laya")) >= 0.9
     assert score_element(["new"], _el(1, "New Tab")) >= 0.9  # full coverage, exact token

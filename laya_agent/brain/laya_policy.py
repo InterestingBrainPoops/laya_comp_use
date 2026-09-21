@@ -44,7 +44,8 @@ class LayaPolicy:
         elements = self.rank_elements(goal, snap.elements)[: self.cfg.max_elements]
         state = self.build_state(goal, snap, history)
         lex = lexical_scores(goal, elements, self.aliases.as_dict())
-        by_lex = sorted(elements, key=lambda e: lex[e.id], reverse=True)
+        # Ties: selected (current tab's own controls) first, then front-most / shallowest.
+        by_lex = sorted(elements, key=lambda e: (lex[e.id], e.selected, -e.id), reverse=True)
 
         explicit = self._explicit_match(by_lex, lex)
         shortlist = self.shortlist(goal, state, elements, by_lex, lex)
@@ -102,9 +103,14 @@ class LayaPolicy:
         best = lex[by_lex[0].id]
         if best < self.LEXICAL_DECIDE:
             return None
-        # Runner-up with the same name (two 'New Tab' buttons) is a duplicate, not ambiguity:
-        # take the first in tree order, which is the shallower, more prominent one.
-        rivals = [e for e in by_lex[1:] if e.name.lower() != by_lex[0].name.lower()]
+        # Runner-up with the same name (two 'New Tab' buttons) or another window of the same
+        # app (two Chrome windows) is a duplicate, not ambiguity: take the first in z/tree
+        # order, which is the front-most or shallower one.
+        top = by_lex[0]
+        rivals = [
+            e for e in by_lex[1:]
+            if e.name.lower() != top.name.lower() and not (e.is_window and top.is_window and e.window == top.window)
+        ]
         second = lex[rivals[0].id] if rivals else 0.0
         if best - second >= self.LEXICAL_MARGIN:
             return by_lex[0]
