@@ -14,7 +14,7 @@ option label carries the element description and the state stays small.
 """
 from __future__ import annotations
 
-import re
+import threading
 from typing import Any, Callable
 
 from laya_agent.brain.aliases import AliasStore
@@ -36,7 +36,7 @@ class LayaPolicy:
         """predict: injectable for tests. Default loads the Laya checkpoint lazily."""
         self.cfg = cfg
         self._predict = predict
-        self._agent = None
+        self._load_lock = threading.Lock()
         self.aliases = aliases if aliases is not None else AliasStore(cfg.alias_path)
 
     # -- public ---------------------------------------------------------------
@@ -222,13 +222,17 @@ class LayaPolicy:
     # -- model ------------------------------------------------------------------
     def predict(self, state: Any, questions: dict[str, Any]) -> dict[str, Any]:
         if self._predict is None:
-            self._predict = self._load()
+            self.preload()
         return self._predict(state, questions)
 
-    def _load(self) -> PredictFn:
-        import laya
+    def preload(self, log: Callable[[str], None] = lambda s: None) -> None:
+        """Load the model now (call from a background thread at startup). Idempotent."""
+        with self._load_lock:
+            if self._predict is None:
+                from laya_agent.brain.model_loader import load_predict
 
-        agent = laya.load(self.cfg.model_id, device=self.cfg.device)
-        agent.cfg["head_max_len"] = self.cfg.head_max_len
-        self._agent = agent
-        return agent.predict
+                self._predict = load_predict(self.cfg, log)
+
+    @property
+    def ready(self) -> bool:
+        return self._predict is not None

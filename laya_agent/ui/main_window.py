@@ -61,6 +61,22 @@ class QtEvents(QObject):
         self._reply_ready.set()
 
 
+class Preloader(QThread):
+    """Loads the model right after the window opens so the first goal is not the slow one."""
+
+    log = Signal(str)
+
+    def __init__(self, loop: AgentLoop) -> None:
+        super().__init__()
+        self.loop = loop
+
+    def run(self) -> None:
+        try:
+            self.loop.policy.preload(self.log.emit)
+        except Exception as e:  # pragma: no cover
+            self.log.emit(f"model load failed: {e}")
+
+
 class Worker(QThread):
     answered = Signal(str, float)
 
@@ -94,6 +110,10 @@ class MainWindow(QMainWindow):
         self._wire()
         self.loop.own_hwnd = int(self.winId())
         self._say("system", "Type a goal, e.g. <i>open the Edit menu</i>. Start with <b>?</b> to ask a yes/no question about the screen. Focus the target app before pressing Enter.")
+        self._say("system", "loading model in the background...")
+        self.preloader = Preloader(self.loop)
+        self.preloader.log.connect(lambda m: self._say("system", m))
+        self.preloader.start()
 
     # -- layout ---------------------------------------------------------------
     def _build(self) -> None:

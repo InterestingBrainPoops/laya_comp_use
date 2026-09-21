@@ -48,6 +48,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.max_steps:
         cfg.max_steps = args.max_steps
     loop = build_loop(cfg, ConsoleEvents())
+    loop.policy.preload(lambda m: print(f"  {m}"))
 
     def run_once(text: str) -> None:
         print(f"focus the target window... {args.delay:.0f}s")
